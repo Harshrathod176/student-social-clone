@@ -105,8 +105,8 @@ twice.
 
 ## Posts
 
-The home page is where posts are written and read. The box at the top writes a
-post, and there are two tabs under it:
+The home page is the feed. The box at the top writes a post, and there are two
+tabs under it:
 
 - **Everyone** shows posts from public profiles, your own posts, and posts from
   private profiles you have been accepted to follow.
@@ -116,6 +116,11 @@ A post can carry a PDF or a picture. A picture is shown in the post itself, so
 a screenshot of what you are building appears straight away, and any `http` or
 `https` address you type becomes a link you can click. Posts also appear on
 your profile, under the same visibility rule as the rest of it.
+
+The page is laid out with the feed on the left and a narrow column on the right
+holding students on your program and the newest members, so the middle of the
+page stays as one clean list of posts. On a phone that column simply moves
+under the feed.
 
 ## Security
 

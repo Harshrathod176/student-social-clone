@@ -1137,16 +1137,40 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
         std::string author   = escape_html(column_text(stmt, 5));
         std::string photo    = escape_html(column_text(stmt, 6));
 
+        // "2026-09-17 10:57:33" is nicer without the seconds.
+        if (when.size() > 16)
+        {
+            when = when.substr(0, 16);
+        }
+
         list += "<div class=\"post\">";
+
+        list += "<div class=\"post-top\">";
 
         if (show_who)
         {
             list += "<a class=\"post-who\" href=\"/student/"
                   + std::to_string(author_id) + "\">";
             list += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
-            list += "<span>" + author + "</span>";
+            list += "<span><b>" + author + "</b><br>";
+            list += "<span class=\"small\">" + when + "</span></span>";
             list += "</a>";
         }
+        else
+        {
+            list += "<span class=\"small\">" + when + "</span>";
+        }
+
+        if (author_id == viewer_id)
+        {
+            list += "<form action=\"/post/delete\" method=\"post\">";
+            list += "<input type=\"hidden\" name=\"id\" value=\"" + post_id + "\">";
+            list += "<button class=\"delete-button\" type=\"submit\" "
+                    "onclick=\"return confirm('Delete this post?')\">Delete</button>";
+            list += "</form>";
+        }
+
+        list += "</div>";
 
         list += "<p class=\"post-body\">" + linkify(body) + "</p>";
 
@@ -1169,19 +1193,6 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
             }
         }
 
-        list += "<div class=\"post-foot\">";
-        list += "<span class=\"small\">" + when + "</span>";
-
-        if (author_id == viewer_id)
-        {
-            list += "<form action=\"/post/delete\" method=\"post\">";
-            list += "<input type=\"hidden\" name=\"id\" value=\"" + post_id + "\">";
-            list += "<button class=\"delete-button\" type=\"submit\" "
-                    "onclick=\"return confirm('Delete this post?')\">Delete</button>";
-            list += "</form>";
-        }
-
-        list += "</div>";
         list += "</div>";
     }
 
@@ -1317,6 +1328,89 @@ std::string composer_html(int viewer_id)
     box += "</div>";
 
     return box;
+}
+
+// Compact rows of students for the sidebar. Much quieter than the big cards.
+std::string render_people_rows(sqlite3_stmt* stmt, int viewer_id)
+{
+    std::string rows;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        int student_id       = sqlite3_column_int(stmt, 0);
+        std::string id       = std::to_string(student_id);
+        std::string username = escape_html(column_text(stmt, 1));
+        std::string photo    = escape_html(column_text(stmt, 2));
+        std::string program  = escape_html(column_text(stmt, 4));
+        int is_private       = sqlite3_column_int(stmt, 5);
+
+        bool show_details = !is_private
+                         || viewer_id == student_id
+                         || follow_status(viewer_id, student_id) == "accepted";
+
+        rows += "<a class=\"person\" href=\"/student/" + id + "\">";
+        rows += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
+        rows += "<span><b>" + username + "</b><br>";
+        rows += "<span class=\"small\">";
+        rows += show_details ? program : "Private profile";
+        rows += "</span></span>";
+        rows += "</a>";
+    }
+
+    return rows;
+}
+
+// The whole right hand column: who to follow, and who is new.
+std::string sidebar_html(int viewer_id)
+{
+    std::string out;
+
+    // Students on your program, if we know it.
+    Student me;
+
+    if (viewer_id != 0 && get_student(viewer_id, me) && !me.program.empty())
+    {
+        const char* sql =
+            "SELECT id, username, photo, year, program, is_private FROM students "
+            "WHERE program = ? AND id != ? AND is_private = 0 LIMIT 5;";
+
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, me.program.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, viewer_id);
+
+        std::string rows = render_people_rows(stmt, viewer_id);
+        sqlite3_finalize(stmt);
+
+        if (!rows.empty())
+        {
+            out += "<div class=\"panel side\">";
+            out += "<h3>Also studying " + escape_html(me.program) + "</h3>";
+            out += rows;
+            out += "</div>";
+        }
+    }
+
+    const char* sql =
+        "SELECT id, username, photo, year, program, is_private FROM students "
+        "ORDER BY id DESC LIMIT 6;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+
+    std::string rows = render_people_rows(stmt, viewer_id);
+    sqlite3_finalize(stmt);
+
+    if (!rows.empty())
+    {
+        out += "<div class=\"panel side\">";
+        out += "<h3>New students</h3>";
+        out += rows;
+        out += "<a class=\"see-all\" href=\"/search\">Search all students</a>";
+        out += "</div>";
+    }
+
+    return out;
 }
 
 std::string chip_row_html(const Student& student)
@@ -1600,8 +1694,7 @@ int main()
         html = replace_all(html, "{{FEED}}",
                            following ? following_feed_html(user_id)
                                      : everyone_feed_html(user_id));
-        html = replace_all(html, "{{RECOMMENDED}}", recommended_html(user_id));
-        html = replace_all(html, "{{NEWEST}}", newest_students_html(user_id));
+        html = replace_all(html, "{{SIDEBAR}}", sidebar_html(user_id));
 
         // The big welcome banner is only for visitors who are not logged in.
         html = replace_all(html, "{{HERO}}",
