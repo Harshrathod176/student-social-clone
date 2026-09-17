@@ -1096,3 +1096,92 @@ a.request:hover {
         width: 84px;
     }
 }
+
+/* ---------- profile header ---------- */
+
+.profile-card {
+    padding: 26px;
+}
+
+.profile-head {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+}
+
+.profile-id {
+    min-width: 0;
+}
+
+.profile-id h1 {
+    margin: 0 0 8px;
+    font-size: 26px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.private-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 999px;
+    padding: 2px 10px;
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* posts / followers / following, on one quiet line */
+.stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.stats b {
+    color: var(--text);
+}
+
+.profile-card .bio {
+    margin: 18px 0 0;
+    white-space: pre-wrap;
+}
+
+.profile-card .button-row {
+    margin-top: 18px;
+}
+
+.add-box {
+    background: var(--page);
+    box-shadow: none;
+}
+
+@media (max-width: 600px) {
+    .profile-card {
+        padding: 20px 16px;
+    }
+
+    .profile-head {
+        flex-direction: column;
+        text-align: center;
+        gap: 14px;
+    }
+
+    .profile-id h1 {
+        justify-content: center;
+    }
+
+    .stats,
+    .chip-row {
+        justify-content: center;
+    }
+
+    .profile-card .button-row {
+        justify-content: center;
+    }
+}

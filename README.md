@@ -10,25 +10,32 @@ Written in C++ with the Crow web library and SQLite.
 
 ## Screenshots
 
-**Home page.** New profiles are listed as cards. `karan_j` has a private
-profile, so his card shows only a picture and a name.
+**The home page.** A box to write a post, then two tabs: everybody's posts, or
+just the people you follow. A picture attached to a post is shown in the post
+itself. Down the right are students on your program and the newest members.
 
 ![Home page](docs/home.png)
 
-**A profile.** Year, program, marks, bio and the certificate PDFs, plus a
-button to follow or unfollow.
+**A profile.** One card with the picture, the counts, the program, year and
+marks, then tabs for that student's posts and their documents.
 
-![A student profile](docs/profile.png)
+![A student profile](docs/prof.png)
 
-**A private profile seen by somebody else.** The details are replaced by a
-message and a Follow button.
+**Documents.** A marksheet, a certificate, a transcript - the title is yours to
+choose, and the file can be a PDF or a photo. PDFs are shown in the browser's
+own viewer. Only you see the upload box and the delete buttons on your profile.
 
-![A private profile](docs/private.png)
+![Documents](docs/docs.png)
 
-**Your own profile.** Follow requests waiting to be accepted, and the buttons
-only you can see.
+**A private profile, seen by somebody else.** Only the picture and the name,
+until the owner accepts the follow request.
 
-![Follow requests](docs/requests.png)
+![A private profile](docs/priv.png)
+
+**Messages.** One to one chat, either open to everybody or limited to your
+followers.
+
+![Messages](docs/chat.png)
 
 *(The students in these pictures are made up for the screenshots.)*
 

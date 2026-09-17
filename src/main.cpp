@@ -232,12 +232,21 @@ bool is_pdf(const std::string& file_name)
     return dot != std::string::npos && lowercase(file_name.substr(dot)) == ".pdf";
 }
 
-// The time is part of the name so that when you change your picture the
-// browser loads the new one instead of the old one it has saved.
-std::string photo_file_name(const std::string& username,
-                            const std::string& extension)
+// A name no other upload can have. The time makes the folder easy to read,
+// and the random part means two files saved in the same second still get
+// different names instead of one quietly replacing the other.
+std::string unique_file_name(const std::string& username,
+                             const std::string& kind,
+                             const std::string& extension)
 {
-    return username + "_" + std::to_string(std::time(nullptr)) + extension;
+    unsigned char bytes[4];
+    char text[9];
+
+    randombytes_buf(bytes, sizeof bytes);
+    sodium_bin2hex(text, sizeof text, bytes, sizeof bytes);
+
+    return username + "_" + kind + std::to_string(std::time(nullptr))
+         + "_" + std::string(text) + extension;
 }
 
 // Uploads bigger than this are refused, so one visitor cannot fill the disk.
@@ -526,10 +535,7 @@ bool save_document(int student_id,
         return false;
     }
 
-    // The time is part of the name so a new document never overwrites
-    // one that is already saved.
-    std::string saved_name =
-        username + "_doc" + std::to_string(std::time(nullptr)) + extension;
+    std::string saved_name = unique_file_name(username, "doc", extension);
 
     add_document(student_id, title, save_upload(file, saved_name));
     return true;
@@ -998,8 +1004,7 @@ bool add_post(int student_id,
             return false;
         }
 
-        web_path = save_upload(file,
-            username + "_post" + std::to_string(std::time(nullptr)) + extension);
+        web_path = save_upload(file, unique_file_name(username, "post", extension));
     }
 
     const char* sql =
@@ -1145,6 +1150,19 @@ int count_follows(int student_id, const char* sql)
 
     sqlite3_finalize(stmt);
     return total;
+}
+
+int count_posts(int student_id)
+{
+    return count_follows(student_id,
+        "SELECT COUNT(*) FROM posts WHERE student_id = ?;");
+}
+
+int count_pending_requests(int student_id)
+{
+    return count_follows(student_id,
+        "SELECT COUNT(*) FROM follows "
+        "WHERE following_id = ? AND status = 'pending';");
 }
 
 int count_followers(int student_id)
@@ -1962,35 +1980,15 @@ std::string documents_html(int student_id, bool is_owner)
 }
 
 // The upload form only appears when you are looking at your own profile.
-std::string owner_section_html(bool is_owner,
-                               const Student& owner,
-                               const std::string& message)
+// The upload box, shown inside the Documents tab on your own profile.
+std::string add_document_html(const std::string& message)
 {
-    if (!is_owner)
-    {
-        return "";
-    }
-
     std::string form;
 
-    form += "<div class=\"panel\">";
-    form += "<h3>Follow requests</h3>";
-    form += follow_requests_html(owner.id);
-    form += "</div>";
-
-    form += "<div class=\"panel\">";
-    form += "<h3>Your profile</h3>";
-    form += "<p class=\"muted\">Only you can see these buttons. Your profile is ";
-    form += owner.is_private ? "<b>private</b>. " : "<b>public</b>. ";
-    form += owner.dm_open
-        ? "Anybody can message you."
-        : "Only your followers can message you.";
-    form += "</p>";
-    form += "<a class=\"button-link\" href=\"/edit\">Edit profile</a>";
-    form += "</div>";
-
-    form += "<div class=\"panel\">";
+    form += "<div class=\"panel add-box\">";
     form += "<h3>Add a document</h3>";
+    form += "<p class=\"muted small-note\">A marksheet, a certificate, a "
+            "transcript - anything you want on your profile.</p>";
 
     if (!message.empty())
     {
@@ -2000,9 +1998,11 @@ std::string owner_section_html(bool is_owner,
     form += "<form action=\"/document\" method=\"post\" "
             "enctype=\"multipart/form-data\">";
     form += "<label>What is it?</label>";
-    form += "<input type=\"text\" name=\"title\" placeholder=\"Semester 3 Marksheet\" required>";
+    form += "<input type=\"text\" name=\"title\" "
+            "placeholder=\"Semester 3 Marksheet\" required>";
     form += "<label>File (PDF, JPG or PNG)</label>";
-    form += "<input type=\"file\" name=\"file\" accept=\".pdf,.jpg,.jpeg,.png\" required>";
+    form += "<input type=\"file\" name=\"file\" "
+            "accept=\".pdf,.jpg,.jpeg,.png\" required>";
     form += "<button type=\"submit\">Upload</button>";
     form += "</form>";
     form += "</div>";
@@ -2046,84 +2046,126 @@ crow::response edit_page(const Student& student, const std::string& message)
 
 crow::response profile_page(const Student& student,
                             int user_id,
-                            const std::string& message)
+                            const std::string& message,
+                            bool documents_tab)
 {
     bool is_owner = student.id == user_id;
     bool show_details = can_see_details(student, user_id);
 
     std::string html = read_file("templates/profile.html");
+    std::string id = std::to_string(student.id);
 
     html = replace_all(html, "{{NAV}}", nav_html(user_id));
     html = replace_all(html, "{{USERNAME}}", escape_html(student.username));
     html = replace_all(html, "{{PHOTO}}", escape_html(student.photo));
-    std::string buttons = follow_button_html(student, user_id);
+
+    html = replace_all(html, "{{PRIVATE_BADGE}}",
+        student.is_private
+            ? "<span class=\"private-badge\">Private</span>"
+            : "");
+
+    // Posts, followers and following, as one quiet line.
+    std::string stats;
+    stats += "<span><b>" + std::to_string(count_posts(student.id))
+           + "</b> posts</span>";
+    stats += "<span><b>" + std::to_string(count_followers(student.id))
+           + "</b> followers</span>";
+    stats += "<span><b>" + std::to_string(count_following(student.id))
+           + "</b> following</span>";
+    html = replace_all(html, "{{STATS}}", stats);
+
+    // Follow, message and edit sit together under the name.
+    std::string actions = follow_button_html(student, user_id);
 
     if (can_message(user_id, student))
     {
-        buttons += "<a class=\"button-link quiet-link\" href=\"/messages/"
-                 + std::to_string(student.id) + "\">Message</a>";
-    }
-    else if (user_id != 0 && user_id != student.id)
-    {
-        buttons += "<p class=\"small\">" + escape_html(student.username)
-                 + " only accepts messages from their followers.</p>";
+        actions += "<a class=\"button-link quiet-link\" href=\"/messages/"
+                 + id + "\">Message</a>";
     }
 
-    html = replace_all(html, "{{FOLLOW_BUTTON}}",
-                       "<div class=\"button-row\">" + buttons + "</div>");
-
-    std::string counts;
-    counts += "<span class=\"chip\">" + std::to_string(count_followers(student.id))
-            + " followers</span>";
-    counts += "<span class=\"chip\">" + std::to_string(count_following(student.id))
-            + " following</span>";
-    html = replace_all(html, "{{COUNTS}}", counts);
-
-    if (student.is_private)
+    if (is_owner)
     {
-        html = replace_all(html, "{{PRIVATE_BADGE}}",
-                           "<p class=\"private-badge\">Private profile</p>");
-    }
-    else
-    {
-        html = replace_all(html, "{{PRIVATE_BADGE}}", "");
+        actions += "<a class=\"button-link quiet-link\" href=\"/edit\">"
+                   "Edit profile</a>";
     }
 
-    // Everything below here is only filled in when the visitor is allowed
-    // to see the details. Otherwise they get the locked message instead.
-    if (show_details)
+    html = replace_all(html, "{{ACTIONS}}", actions);
+
+    std::string note;
+
+    if (!is_owner && user_id != 0 && !can_message(user_id, student))
     {
-        std::string bio = student.bio.empty()
-            ? ""
-            : "<p class=\"bio\">" + escape_html(student.bio) + "</p>";
-
-        std::string documents =
-            "<div class=\"panel\"><h3>Posts</h3>"
-            + profile_posts_html(student.id, user_id) + "</div>"
-            "<div class=\"panel\"><h3>Documents</h3>"
-            + documents_html(student.id, is_owner) + "</div>";
-
-        html = replace_all(html, "{{CHIPS}}", chip_row_html(student));
-        html = replace_all(html, "{{BIO}}", bio);
-        html = replace_all(html, "{{DETAILS}}", documents);
+        note = "<p class=\"small\">" + escape_html(student.username)
+             + " only accepts messages from their followers.</p>";
     }
-    else
-    {
-        std::string locked;
-        locked += "<div class=\"panel locked\">";
-        locked += "<h3>This profile is private</h3>";
-        locked += "<p class=\"muted\">Follow " + escape_html(student.username)
-                + " to see their year, program, marks, bio, posts and documents. "
-                  "They have to accept your request first.</p>";
-        locked += "</div>";
 
+    html = replace_all(html, "{{NOTE}}", note);
+
+    // Follow requests only appear when somebody is actually waiting.
+    std::string requests;
+
+    if (is_owner && count_pending_requests(student.id) > 0)
+    {
+        requests += "<div class=\"panel\">";
+        requests += "<h3>Follow requests</h3>";
+        requests += follow_requests_html(student.id);
+        requests += "</div>";
+    }
+
+    html = replace_all(html, "{{REQUESTS}}", requests);
+
+    if (!show_details)
+    {
+        // A private profile stops here: a name, a picture and a way to ask.
         html = replace_all(html, "{{CHIPS}}", "");
         html = replace_all(html, "{{BIO}}", "");
-        html = replace_all(html, "{{DETAILS}}", locked);
+        html = replace_all(html, "{{TABS}}", "");
+        html = replace_all(html, "{{CONTENT}}",
+            "<div class=\"panel locked\">"
+            "<h3>This profile is private</h3>"
+            "<p class=\"muted\">Follow " + escape_html(student.username)
+            + " to see their year, program, marks, bio, posts and documents. "
+              "They have to accept your request first.</p></div>");
+
+        return html_page(html);
     }
 
-    html = replace_all(html, "{{OWNER_SECTION}}",
-                       owner_section_html(is_owner, student, message));
+    html = replace_all(html, "{{CHIPS}}", chip_row_html(student));
+    html = replace_all(html, "{{BIO}}",
+        student.bio.empty() ? ""
+                            : "<p class=\"bio\">" + escape_html(student.bio) + "</p>");
+
+    // Posts and documents share the page through two tabs instead of being
+    // stacked one under the other.
+    std::string tabs;
+    tabs += "<div class=\"tabs\">";
+    tabs += "<a class=\"tab";
+    tabs += documents_tab ? "" : " active";
+    tabs += "\" href=\"/student/" + id + "\">Posts</a>";
+    tabs += "<a class=\"tab";
+    tabs += documents_tab ? " active" : "";
+    tabs += "\" href=\"/student/" + id + "?tab=documents\">Documents</a>";
+    tabs += "</div>";
+
+    html = replace_all(html, "{{TABS}}", tabs);
+
+    std::string content;
+
+    if (documents_tab)
+    {
+        if (is_owner)
+        {
+            content += add_document_html(message);
+        }
+
+        content += documents_html(student.id, is_owner);
+    }
+    else
+    {
+        content += profile_posts_html(student.id, user_id);
+    }
+
+    html = replace_all(html, "{{CONTENT}}", content);
 
     return html_page(html);
 }
@@ -2235,7 +2277,7 @@ int main()
         }
 
         student.photo = save_upload(picture,
-                                    photo_file_name(student.username, extension));
+            unique_file_name(student.username, "", extension));
 
         if (!add_student(student, hash_password(password)))
         {
@@ -2316,7 +2358,10 @@ int main()
 
         const char* note = req.url_params.get("note");
 
-        return profile_page(student, user_id, note ? note : "");
+        const char* tab = req.url_params.get("tab");
+
+        return profile_page(student, user_id, note ? note : "",
+                            tab && std::string(tab) == "documents");
     });
 
     CROW_ROUTE(app, "/edit")
@@ -2377,7 +2422,7 @@ int main()
             }
 
             student.photo = save_upload(picture,
-                                        photo_file_name(student.username, extension));
+                unique_file_name(student.username, "", extension));
 
             // The old picture is not needed any more.
             std::remove(("." + old_photo).c_str());
@@ -2408,7 +2453,7 @@ int main()
 
         if (!saved)
         {
-            return redirect_to("/profile?note=Please+add+a+name+and+a+PDF+file.");
+            return redirect_to("/profile?tab=documents&note=Please+add+a+name+and+a+file.");
         }
 
         return redirect_to("/profile");
@@ -2673,7 +2718,7 @@ int main()
             delete_document(document_id, user_id);
         }
 
-        return redirect_to("/profile");
+        return redirect_to("/profile?tab=documents");
     });
 
     CROW_ROUTE(app, "/student/<int>")
@@ -2686,7 +2731,10 @@ int main()
             return crow::response(404, "Student not found.");
         }
 
-        return profile_page(student, logged_in_id(req), "");
+        const char* tab = req.url_params.get("tab");
+
+        return profile_page(student, logged_in_id(req), "",
+                            tab && std::string(tab) == "documents");
     });
 
     CROW_ROUTE(app, "/search")

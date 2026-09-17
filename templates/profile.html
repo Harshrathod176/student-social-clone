@@ -15,23 +15,30 @@
 
 <div class="wrap narrow">
 
-    <div class="panel">
+    <div class="panel profile-card">
+
         <div class="profile-head">
             <img class="profile-photo" src="{{PHOTO}}" alt="profile picture">
-            <div>
-                <h1>{{USERNAME}}</h1>
-                {{PRIVATE_BADGE}}
-                <div class="chip-row">{{COUNTS}}{{CHIPS}}</div>
+
+            <div class="profile-id">
+                <h1>{{USERNAME}} {{PRIVATE_BADGE}}</h1>
+                <div class="stats">{{STATS}}</div>
+                <div class="chip-row">{{CHIPS}}</div>
             </div>
         </div>
 
         {{BIO}}
-        {{FOLLOW_BUTTON}}
+
+        <div class="button-row">{{ACTIONS}}</div>
+        {{NOTE}}
+
     </div>
 
-    {{DETAILS}}
+    {{REQUESTS}}
 
-    {{OWNER_SECTION}}
+    {{TABS}}
+
+    {{CONTENT}}
 
 </div>
 
