@@ -1,9 +1,10 @@
 # Student Profiles
 
-A college project. Students create a profile with a picture, bio, marks and
-PDF certificates. Everyone can browse the home page, search for students and
+A college project. Students create a profile with a picture, bio, marks,
+documents and posts. Everyone can browse the home page, search for students and
 open their profiles. A profile can be made private, and then only accepted
-followers can see the details.
+followers can see the details. Students can also send each other direct
+messages.
 
 Written in C++ with the Crow web library and SQLite.
 
@@ -34,7 +35,8 @@ only you can see.
 ## What it uses
 
 - C++ with the Crow library for the web server
-- SQLite for the database (three tables: `students`, `certificates`, `follows`)
+- SQLite for the database (five tables: `students`, `documents`, `posts`,
+  `messages`, `follows`)
 - Plain HTML forms and one CSS file (the only JavaScript is the one-line
   "are you sure?" box on the delete button)
 
@@ -68,23 +70,58 @@ Then open http://localhost:8090
 | `/logout` | Logs out |
 | `/profile` | Your own profile, with the edit and upload buttons |
 | `/edit` | Form to change your picture, bio, year, program and marks |
-| `/certificate/delete` | Deletes one of your own certificates |
+| `/document` `/document/delete` | Add or remove one of your own documents |
 | `/follow` `/unfollow` | Send, cancel or undo a follow |
 | `/follow/accept` `/follow/reject` | Answer a request on your own profile |
+| `/post` `/post/delete` | Write or remove one of your posts |
+| `/messages` | Your conversations |
+| `/messages/<id>` | The chat with one student |
+| `/messages/send` | Sends a message |
 | `/search` | Search students by username or program |
 | `/student/<id>` | Another student's profile |
 
-## The three tables
+## The five tables
 
-`students` holds one row per person. `certificates` holds one row per PDF, and
-its `student_id` column says which student it belongs to. That is a one-to-many
-relationship: one student can have many certificates.
+`students` holds one row per person.
+
+`documents` holds one row per uploaded file, and its `student_id` column says
+which student it belongs to. That is a one-to-many relationship: one student can
+have many documents. A document can be a PDF or a picture, because a marksheet
+is often just a photo, and the title is free text so it can be a marksheet, a
+certificate, a transcript or anything else.
+
+`posts` holds the short updates a student writes, with an optional file. It is
+also one-to-many.
+
+`messages` holds one row per direct message with a `sender_id` and a
+`receiver_id`.
 
 `follows` holds one row per follow, with `follower_id` (who asked),
 `following_id` (who they want to follow) and `status`. That is a many-to-many
 relationship: a student can follow many students and be followed by many. The
 `UNIQUE (follower_id, following_id)` rule stops the same request being stored
 twice.
+
+## Posts
+
+A post is a line or two of text with an optional PDF or picture. Posts show on
+the profile, and follow the same visibility rule as everything else: on a
+private profile only accepted followers see them. The home page also shows a
+feed of the newest posts from the people you follow.
+
+## Direct messages
+
+Every student has a `dm_open` column. When it is on, any signed in student can
+start a chat. When it is off, only the people whose follow requests you have
+accepted can write to you.
+
+`can_message` is the one function that decides this, and it is checked twice:
+once when drawing the page, so the typing box is hidden, and again in
+`/messages/send` before anything is saved. Hiding a form is not security on its
+own, because anybody can send the request by hand.
+
+A conversation query only ever selects rows where you are the sender or the
+receiver, so there is no address you can visit to read somebody else's chat.
 
 ## Private profiles
 

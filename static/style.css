@@ -349,7 +349,7 @@ button:hover {
     white-space: pre-wrap;
 }
 
-.certificate {
+.document {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -360,11 +360,11 @@ button:hover {
     margin-bottom: 10px;
 }
 
-.certificate:hover {
+.document:hover {
     border-color: var(--accent);
 }
 
-.certificate-link {
+.document-link {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -374,7 +374,7 @@ button:hover {
     color: var(--text);
 }
 
-.certificate form {
+.document form {
     display: block;
     margin: 0;
 }
@@ -633,4 +633,138 @@ button:hover {
 .small-note {
     font-size: 13px;
     margin-top: 8px;
+}
+
+/* ---------- posts ---------- */
+
+.post {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+
+.post-who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500;
+    color: var(--text);
+    text-decoration: none;
+    margin-bottom: 8px;
+}
+
+.post-body {
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+}
+
+.post-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.post-foot form {
+    display: block;
+    margin: 0;
+}
+
+.post-foot button {
+    margin: 0;
+    padding: 5px 11px;
+    font-size: 12px;
+}
+
+.small {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+/* ---------- messages ---------- */
+
+.button-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.button-row form {
+    display: block;
+    margin: 0;
+}
+
+.button-row button {
+    margin: 0;
+}
+
+.quiet-link {
+    background: var(--page);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 9px 19px;
+}
+
+.quiet-link:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.chat-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    text-decoration: none;
+    color: var(--text);
+}
+
+.bubble-row {
+    display: flex;
+    margin-bottom: 10px;
+}
+
+.bubble-row.mine {
+    justify-content: flex-end;
+}
+
+.bubble {
+    max-width: 78%;
+    border-radius: 14px;
+    padding: 9px 14px;
+    background: var(--page);
+    border: 1px solid var(--border);
+}
+
+.bubble-row.mine .bubble {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+.bubble-row.mine .bubble .small {
+    color: #dfe3ff;
+}
+
+.bubble p {
+    margin: 0 0 3px;
+    white-space: pre-wrap;
+}
+
+.subhead {
+    margin-top: 22px;
+}
+
+a.request {
+    text-decoration: none;
+    color: var(--text);
+}
+
+a.request:hover {
+    background: var(--accent-soft);
 }

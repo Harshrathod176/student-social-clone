@@ -7,10 +7,12 @@ CREATE TABLE IF NOT EXISTS students (
     year TEXT NOT NULL,
     program TEXT NOT NULL,
     marks TEXT NOT NULL,
-    is_private INTEGER NOT NULL DEFAULT 0
+    is_private INTEGER NOT NULL DEFAULT 0,
+    dm_open INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE IF NOT EXISTS certificates (
+-- Any student document: a marksheet, a certificate, a transcript, anything.
+CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id INTEGER NOT NULL,
     title TEXT NOT NULL,
@@ -18,8 +20,27 @@ CREATE TABLE IF NOT EXISTS certificates (
     FOREIGN KEY (student_id) REFERENCES students(id)
 );
 
--- One row per follow. status is 'pending' while the other student has not
--- accepted yet, and 'accepted' once they have.
+-- Short updates a student writes, with an optional file attached.
+CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    file_path TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (student_id) REFERENCES students(id)
+);
+
+-- One row per direct message.
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES students(id),
+    FOREIGN KEY (receiver_id) REFERENCES students(id)
+);
+
 CREATE TABLE IF NOT EXISTS follows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     follower_id INTEGER NOT NULL,

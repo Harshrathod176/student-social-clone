@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with {{OTHER_NAME}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+    <a class="brand" href="/">Student<span>Profiles</span></a>
+    {{NAV}}
+</nav>
+
+<div class="wrap narrow">
+
+    <a class="request-who chat-head" href="/student/{{OTHER_ID}}">
+        <img class="thumb" src="{{OTHER_PHOTO}}" alt="">
+        <span><b>{{OTHER_NAME}}</b></span>
+    </a>
+
+    <div class="panel">
+        {{MESSAGES}}
+    </div>
+
+    <div class="panel">
+        {{SEND_BOX}}
+    </div>
+
+    <p class="form-footer"><a href="/messages">Back to messages</a></p>
+
+</div>
+
+</body>
+</html>

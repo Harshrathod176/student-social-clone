@@ -205,6 +205,7 @@ struct Student
     std::string program;
     std::string marks;
     int is_private = 0;
+    int dm_open = 1;
 };
 
 std::string column_text(sqlite3_stmt* stmt, int index)
@@ -256,7 +257,7 @@ void update_student(const Student& student)
 {
     const char* sql =
         "UPDATE students SET bio = ?, year = ?, program = ?, marks = ?, photo = ?, "
-        "is_private = ? WHERE id = ?;";
+        "is_private = ?, dm_open = ? WHERE id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -267,7 +268,8 @@ void update_student(const Student& student)
     sqlite3_bind_text(stmt, 4, student.marks.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 5, student.photo.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 6, student.is_private);
-    sqlite3_bind_int(stmt, 7, student.id);
+    sqlite3_bind_int(stmt, 7, student.dm_open);
+    sqlite3_bind_int(stmt, 8, student.id);
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -276,8 +278,8 @@ void update_student(const Student& student)
 bool get_student(int id, Student& student)
 {
     const char* sql =
-        "SELECT id, username, bio, photo, year, program, marks, is_private "
-        "FROM students WHERE id = ?;";
+        "SELECT id, username, bio, photo, year, program, marks, is_private, "
+        "dm_open FROM students WHERE id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -295,6 +297,7 @@ bool get_student(int id, Student& student)
         student.program  = column_text(stmt, 5);
         student.marks      = column_text(stmt, 6);
         student.is_private = sqlite3_column_int(stmt, 7);
+        student.dm_open    = sqlite3_column_int(stmt, 8);
         found = true;
     }
 
@@ -323,12 +326,12 @@ int check_login(const std::string& username, const std::string& password)
     return id;
 }
 
-void add_certificate(int student_id,
+void add_document(int student_id,
                      const std::string& title,
                      const std::string& file_path)
 {
     const char* sql =
-        "INSERT INTO certificates(student_id, title, file_path) VALUES(?, ?, ?);";
+        "INSERT INTO documents(student_id, title, file_path) VALUES(?, ?, ?);";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -342,38 +345,52 @@ void add_certificate(int student_id,
 }
 
 // Saves the PDF and the database row together. Used by signup and by the
-// "add certificate" form on your own profile.
-bool save_certificate(int student_id,
-                      const std::string& username,
-                      const std::string& title,
-                      const crow::multipart::part& file)
+// "add document" form on your own profile.
+// A document can be a PDF or a picture, because a marksheet is often just
+// a photo of a piece of paper.
+std::string document_extension(const std::string& file_name)
 {
-    if (title.empty() || file.body.empty() || !is_pdf(uploaded_file_name(file)))
+    if (is_pdf(file_name))
+    {
+        return ".pdf";
+    }
+
+    return picture_extension(file_name);
+}
+
+bool save_document(int student_id,
+                   const std::string& username,
+                   const std::string& title,
+                   const crow::multipart::part& file)
+{
+    std::string extension = document_extension(uploaded_file_name(file));
+
+    if (title.empty() || file.body.empty() || extension.empty())
     {
         return false;
     }
 
-    // The time is part of the name so a new certificate never overwrites
+    // The time is part of the name so a new document never overwrites
     // one that is already saved.
     std::string saved_name =
-        username + "_cert" + std::to_string(std::time(nullptr)) + ".pdf";
+        username + "_doc" + std::to_string(std::time(nullptr)) + extension;
 
-    add_certificate(student_id, title, save_upload(file, saved_name));
+    add_document(student_id, title, save_upload(file, saved_name));
     return true;
 }
 
-// Finds a certificate, but only if it belongs to this student. This is what
-// stops someone deleting another student's certificate.
-bool find_own_certificate(int certificate_id,
+// Finds a document, but only if it belongs to this student. This is what
+// stops someone deleting another student's document.
+bool find_own_document(int document_id,
                           int student_id,
                           std::string& file_path)
 {
     const char* sql =
-        "SELECT file_path FROM certificates WHERE id = ? AND student_id = ?;";
+        "SELECT file_path FROM documents WHERE id = ? AND student_id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, certificate_id);
+    sqlite3_bind_int(stmt, 1, document_id);
     sqlite3_bind_int(stmt, 2, student_id);
 
     bool found = false;
@@ -388,13 +405,90 @@ bool find_own_certificate(int certificate_id,
     return found;
 }
 
-void delete_certificate(int certificate_id, int student_id)
+void delete_document(int document_id, int student_id)
 {
-    const char* sql = "DELETE FROM certificates WHERE id = ? AND student_id = ?;";
+    const char* sql = "DELETE FROM documents WHERE id = ? AND student_id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, certificate_id);
+    sqlite3_bind_int(stmt, 1, document_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// ---------- posts ----------
+
+// A post is a short update. The file is optional.
+bool add_post(int student_id,
+              const std::string& username,
+              const std::string& body,
+              const crow::multipart::part& file)
+{
+    if (body.empty())
+    {
+        return false;
+    }
+
+    std::string web_path;
+
+    if (!file.body.empty())
+    {
+        std::string extension = document_extension(uploaded_file_name(file));
+
+        if (extension.empty())
+        {
+            return false;
+        }
+
+        web_path = save_upload(file,
+            username + "_post" + std::to_string(std::time(nullptr)) + extension);
+    }
+
+    const char* sql =
+        "INSERT INTO posts(student_id, body, file_path) VALUES(?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+    sqlite3_bind_text(stmt, 2, body.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, web_path.c_str(), -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return true;
+}
+
+bool find_own_post(int post_id, int student_id, std::string& file_path)
+{
+    const char* sql =
+        "SELECT file_path FROM posts WHERE id = ? AND student_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    bool found = false;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        file_path = column_text(stmt, 0);
+        found = true;
+    }
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+void delete_post(int post_id, int student_id)
+{
+    const char* sql = "DELETE FROM posts WHERE id = ? AND student_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
     sqlite3_bind_int(stmt, 2, student_id);
 
     sqlite3_step(stmt);
@@ -523,6 +617,136 @@ bool can_see_details(const Student& student, int viewer_id)
     return follow_status(viewer_id, student.id) == "accepted";
 }
 
+// ---------- direct messages ----------
+
+// The rule for who is allowed to message whom. A student either has their
+// inbox open to everybody, or only to the people who follow them.
+bool can_message(int sender_id, const Student& receiver)
+{
+    if (sender_id == 0 || sender_id == receiver.id)
+    {
+        return false;
+    }
+
+    if (receiver.dm_open)
+    {
+        return true;
+    }
+
+    return follow_status(sender_id, receiver.id) == "accepted";
+}
+
+void add_message(int sender_id, int receiver_id, const std::string& body)
+{
+    const char* sql =
+        "INSERT INTO messages(sender_id, receiver_id, body) VALUES(?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, sender_id);
+    sqlite3_bind_int(stmt, 2, receiver_id);
+    sqlite3_bind_text(stmt, 3, body.c_str(), -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// Everything the two of you have said to each other, oldest first.
+std::string conversation_html(int me, int them)
+{
+    const char* sql =
+        "SELECT sender_id, body, created_at FROM messages "
+        "WHERE (sender_id = ? AND receiver_id = ?) "
+        "   OR (sender_id = ? AND receiver_id = ?) "
+        "ORDER BY id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, me);
+    sqlite3_bind_int(stmt, 2, them);
+    sqlite3_bind_int(stmt, 3, them);
+    sqlite3_bind_int(stmt, 4, me);
+
+    std::string list;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        bool mine = sqlite3_column_int(stmt, 0) == me;
+        std::string body = escape_html(column_text(stmt, 1));
+        std::string when = escape_html(column_text(stmt, 2));
+
+        list += "<div class=\"bubble-row ";
+        list += mine ? "mine" : "theirs";
+        list += "\">";
+        list += "<div class=\"bubble\">";
+        list += "<p>" + body + "</p>";
+        list += "<span class=\"small\">" + when + "</span>";
+        list += "</div>";
+        list += "</div>";
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">No messages yet. Say hello.</p>";
+    }
+
+    return list;
+}
+
+// The inbox: one line per person you have messaged or who has messaged you.
+std::string inbox_html(int me)
+{
+    const char* sql =
+        "SELECT s.id, s.username, s.photo, "
+        "       (SELECT body FROM messages m2 "
+        "         WHERE (m2.sender_id = s.id AND m2.receiver_id = ?) "
+        "            OR (m2.sender_id = ? AND m2.receiver_id = s.id) "
+        "         ORDER BY m2.id DESC LIMIT 1) AS last_body "
+        "FROM students s "
+        "WHERE s.id IN ("
+        "    SELECT receiver_id FROM messages WHERE sender_id = ? "
+        "    UNION "
+        "    SELECT sender_id FROM messages WHERE receiver_id = ?"
+        ") ORDER BY s.username;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, me);
+    sqlite3_bind_int(stmt, 2, me);
+    sqlite3_bind_int(stmt, 3, me);
+    sqlite3_bind_int(stmt, 4, me);
+
+    std::string list;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        std::string id       = std::to_string(sqlite3_column_int(stmt, 0));
+        std::string username = escape_html(column_text(stmt, 1));
+        std::string photo    = escape_html(column_text(stmt, 2));
+        std::string last     = escape_html(column_text(stmt, 3));
+
+        list += "<a class=\"request\" href=\"/messages/" + id + "\">";
+        list += "<span class=\"request-who\">";
+        list += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
+        list += "<span><b>" + username + "</b><br>";
+        list += "<span class=\"small\">" + last + "</span></span>";
+        list += "</span>";
+        list += "</a>";
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">No conversations yet. Open somebody's "
+               "profile and press Message.</p>";
+    }
+
+    return list;
+}
+
 // ---------- building pieces of HTML ----------
 
 std::string nav_html(int user_id)
@@ -539,6 +763,7 @@ std::string nav_html(int user_id)
     }
     else
     {
+        links += "<a href=\"/messages\">Messages</a>";
         links += "<a href=\"/profile\">My Profile</a>";
         links += "<a class=\"nav-button\" href=\"/logout\">Logout</a>";
     }
@@ -741,6 +966,126 @@ std::string follow_requests_html(int student_id)
     return list;
 }
 
+// Draws the rows of a posts query. The query must select:
+// post id, body, file_path, created_at, student id, username, photo.
+std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
+{
+    std::string list;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        std::string post_id  = std::to_string(sqlite3_column_int(stmt, 0));
+        std::string body     = escape_html(column_text(stmt, 1));
+        std::string file     = escape_html(column_text(stmt, 2));
+        std::string when     = escape_html(column_text(stmt, 3));
+        int author_id        = sqlite3_column_int(stmt, 4);
+        std::string author   = escape_html(column_text(stmt, 5));
+        std::string photo    = escape_html(column_text(stmt, 6));
+
+        list += "<div class=\"post\">";
+
+        if (show_who)
+        {
+            list += "<a class=\"post-who\" href=\"/student/"
+                  + std::to_string(author_id) + "\">";
+            list += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
+            list += "<span>" + author + "</span>";
+            list += "</a>";
+        }
+
+        list += "<p class=\"post-body\">" + body + "</p>";
+
+        if (!file.empty())
+        {
+            std::string kind = is_pdf(file) ? "PDF" : "IMG";
+            list += "<a class=\"document-link\" href=\"" + file
+                  + "\" target=\"_blank\">";
+            list += "<span class=\"pdf-tag\">" + kind + "</span>";
+            list += "<span>Open attachment</span>";
+            list += "</a>";
+        }
+
+        list += "<div class=\"post-foot\">";
+        list += "<span class=\"small\">" + when + "</span>";
+
+        if (author_id == viewer_id)
+        {
+            list += "<form action=\"/post/delete\" method=\"post\">";
+            list += "<input type=\"hidden\" name=\"id\" value=\"" + post_id + "\">";
+            list += "<button class=\"delete-button\" type=\"submit\" "
+                    "onclick=\"return confirm('Delete this post?')\">Delete</button>";
+            list += "</form>";
+        }
+
+        list += "</div>";
+        list += "</div>";
+    }
+
+    return list;
+}
+
+// The posts on somebody's profile.
+std::string profile_posts_html(int student_id, int viewer_id)
+{
+    const char* sql =
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "FROM posts p JOIN students s ON s.id = p.student_id "
+        "WHERE p.student_id = ? ORDER BY p.id DESC;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    std::string list = render_posts(stmt, viewer_id, false);
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">No posts yet.</p>";
+    }
+
+    return list;
+}
+
+// The home page feed: posts by the people you follow.
+std::string feed_html(int viewer_id)
+{
+    if (viewer_id == 0)
+    {
+        return "";
+    }
+
+    const char* sql =
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "FROM posts p "
+        "JOIN students s ON s.id = p.student_id "
+        "JOIN follows f ON f.following_id = p.student_id "
+        "WHERE f.follower_id = ? AND f.status = 'accepted' "
+        "ORDER BY p.id DESC LIMIT 10;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, viewer_id);
+
+    std::string list = render_posts(stmt, viewer_id, true);
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "";
+    }
+
+    std::string section;
+    section += "<h2>From people you follow</h2>";
+    section += "<p class=\"section-note\">The newest updates from students "
+               "you follow.</p>";
+    section += list;
+
+    return section;
+}
+
 std::string chip_row_html(const Student& student)
 {
     std::string chips;
@@ -763,10 +1108,10 @@ std::string chip_row_html(const Student& student)
     return chips;
 }
 
-std::string certificates_html(int student_id, bool is_owner)
+std::string documents_html(int student_id, bool is_owner)
 {
     const char* sql =
-        "SELECT id, title, file_path FROM certificates WHERE student_id = ? "
+        "SELECT id, title, file_path FROM documents WHERE student_id = ? "
         "ORDER BY id;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -781,20 +1126,21 @@ std::string certificates_html(int student_id, bool is_owner)
         std::string title = escape_html(column_text(stmt, 1));
         std::string path  = escape_html(column_text(stmt, 2));
 
-        list += "<div class=\"certificate\">";
-        list += "<a class=\"certificate-link\" href=\"" + path
+        list += "<div class=\"document\">";
+        list += "<a class=\"document-link\" href=\"" + path
               + "\" target=\"_blank\">";
-        list += "<span class=\"pdf-tag\">PDF</span>";
+        std::string kind = is_pdf(path) ? "PDF" : "IMG";
+        list += "<span class=\"pdf-tag\">" + kind + "</span>";
         list += "<span>" + title + "</span>";
         list += "</a>";
 
         // The delete button is only drawn on your own profile.
         if (is_owner)
         {
-            list += "<form action=\"/certificate/delete\" method=\"post\">";
+            list += "<form action=\"/document/delete\" method=\"post\">";
             list += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
             list += "<button class=\"delete-button\" type=\"submit\" "
-                    "onclick=\"return confirm('Delete this certificate?')\">"
+                    "onclick=\"return confirm('Delete this document?')\">"
                     "Delete</button>";
             list += "</form>";
         }
@@ -806,7 +1152,7 @@ std::string certificates_html(int student_id, bool is_owner)
 
     if (list.empty())
     {
-        return "<p class=\"empty\">No certificates added yet.</p>";
+        return "<p class=\"empty\">No documents added yet.</p>";
     }
 
     return list;
@@ -825,6 +1171,18 @@ std::string owner_section_html(bool is_owner,
     std::string form;
 
     form += "<div class=\"panel\">";
+    form += "<h3>Write a post</h3>";
+    form += "<form action=\"/post\" method=\"post\" "
+            "enctype=\"multipart/form-data\">";
+    form += "<textarea name=\"body\" rows=\"3\" "
+            "placeholder=\"What are you working on?\" required></textarea>";
+    form += "<label>Attach a file (optional)</label>";
+    form += "<input type=\"file\" name=\"file\" accept=\".pdf,.jpg,.jpeg,.png\">";
+    form += "<button type=\"submit\">Post</button>";
+    form += "</form>";
+    form += "</div>";
+
+    form += "<div class=\"panel\">";
     form += "<h3>Follow requests</h3>";
     form += follow_requests_html(owner.id);
     form += "</div>";
@@ -832,25 +1190,28 @@ std::string owner_section_html(bool is_owner,
     form += "<div class=\"panel\">";
     form += "<h3>Your profile</h3>";
     form += "<p class=\"muted\">Only you can see these buttons. Your profile is ";
-    form += owner.is_private ? "<b>private</b>." : "<b>public</b>.";
+    form += owner.is_private ? "<b>private</b>. " : "<b>public</b>. ";
+    form += owner.dm_open
+        ? "Anybody can message you."
+        : "Only your followers can message you.";
     form += "</p>";
     form += "<a class=\"button-link\" href=\"/edit\">Edit profile</a>";
     form += "</div>";
 
     form += "<div class=\"panel\">";
-    form += "<h3>Add a certificate</h3>";
+    form += "<h3>Add a document</h3>";
 
     if (!message.empty())
     {
         form += "<p class=\"message\">" + escape_html(message) + "</p>";
     }
 
-    form += "<form action=\"/certificate\" method=\"post\" "
+    form += "<form action=\"/document\" method=\"post\" "
             "enctype=\"multipart/form-data\">";
-    form += "<label>Certificate name</label>";
-    form += "<input type=\"text\" name=\"title\" placeholder=\"Python Basics\" required>";
-    form += "<label>PDF file</label>";
-    form += "<input type=\"file\" name=\"file\" accept=\".pdf\" required>";
+    form += "<label>What is it?</label>";
+    form += "<input type=\"text\" name=\"title\" placeholder=\"Semester 3 Marksheet\" required>";
+    form += "<label>File (PDF, JPG or PNG)</label>";
+    form += "<input type=\"file\" name=\"file\" accept=\".pdf,.jpg,.jpeg,.png\" required>";
     form += "<button type=\"submit\">Upload</button>";
     form += "</form>";
     form += "</div>";
@@ -886,6 +1247,8 @@ crow::response edit_page(const Student& student, const std::string& message)
     html = replace_all(html, "{{MARKS}}", escape_html(student.marks));
     html = replace_all(html, "{{PRIVATE_CHECKED}}",
                        student.is_private ? "checked" : "");
+    html = replace_all(html, "{{DM_CLOSED_CHECKED}}",
+                       student.dm_open ? "" : "checked");
 
     return html_page(html);
 }
@@ -902,8 +1265,21 @@ crow::response profile_page(const Student& student,
     html = replace_all(html, "{{NAV}}", nav_html(user_id));
     html = replace_all(html, "{{USERNAME}}", escape_html(student.username));
     html = replace_all(html, "{{PHOTO}}", escape_html(student.photo));
+    std::string buttons = follow_button_html(student, user_id);
+
+    if (can_message(user_id, student))
+    {
+        buttons += "<a class=\"button-link quiet-link\" href=\"/messages/"
+                 + std::to_string(student.id) + "\">Message</a>";
+    }
+    else if (user_id != 0 && user_id != student.id)
+    {
+        buttons += "<p class=\"small\">" + escape_html(student.username)
+                 + " only accepts messages from their followers.</p>";
+    }
+
     html = replace_all(html, "{{FOLLOW_BUTTON}}",
-                       follow_button_html(student, user_id));
+                       "<div class=\"button-row\">" + buttons + "</div>");
 
     std::string counts;
     counts += "<span class=\"chip\">" + std::to_string(count_followers(student.id))
@@ -930,13 +1306,15 @@ crow::response profile_page(const Student& student,
             ? ""
             : "<p class=\"bio\">" + escape_html(student.bio) + "</p>";
 
-        std::string certificates =
-            "<div class=\"panel\"><h3>Certificates</h3>"
-            + certificates_html(student.id, is_owner) + "</div>";
+        std::string documents =
+            "<div class=\"panel\"><h3>Posts</h3>"
+            + profile_posts_html(student.id, user_id) + "</div>"
+            "<div class=\"panel\"><h3>Documents</h3>"
+            + documents_html(student.id, is_owner) + "</div>";
 
         html = replace_all(html, "{{CHIPS}}", chip_row_html(student));
         html = replace_all(html, "{{BIO}}", bio);
-        html = replace_all(html, "{{DETAILS}}", certificates);
+        html = replace_all(html, "{{DETAILS}}", documents);
     }
     else
     {
@@ -944,7 +1322,7 @@ crow::response profile_page(const Student& student,
         locked += "<div class=\"panel locked\">";
         locked += "<h3>This profile is private</h3>";
         locked += "<p class=\"muted\">Follow " + escape_html(student.username)
-                + " to see their year, program, marks, bio and certificates. "
+                + " to see their year, program, marks, bio, posts and documents. "
                   "They have to accept your request first.</p>";
         locked += "</div>";
 
@@ -987,6 +1365,7 @@ int main()
         std::string html = read_file("templates/home.html");
 
         html = replace_all(html, "{{NAV}}", nav_html(user_id));
+        html = replace_all(html, "{{FEED}}", feed_html(user_id));
         html = replace_all(html, "{{RECOMMENDED}}", recommended_html(user_id));
         html = replace_all(html, "{{NEWEST}}", newest_students_html(user_id));
 
@@ -1048,13 +1427,13 @@ int main()
                              "Could not save your profile. Please try again.");
         }
 
-        // A certificate on the signup form is optional.
+        // A document on the signup form is optional.
         int new_id = static_cast<int>(sqlite3_last_insert_rowid(db));
 
-        save_certificate(new_id,
+        save_document(new_id,
                          student.username,
-                         form.get_part_by_name("cert_title").body,
-                         form.get_part_by_name("cert_file"));
+                         form.get_part_by_name("doc_title").body,
+                         form.get_part_by_name("doc_file"));
 
         return redirect_to("/login");
     });
@@ -1151,6 +1530,9 @@ int main()
         // A checkbox only appears in the form when it is ticked.
         student.is_private = form.get_part_by_name("is_private").body.empty() ? 0 : 1;
 
+        // This checkbox is the other way round: ticking it closes your inbox.
+        student.dm_open = form.get_part_by_name("dm_closed").body.empty() ? 1 : 0;
+
         // Choosing a new picture is optional. An empty box keeps the old one.
         crow::multipart::part picture = form.get_part_by_name("photo");
 
@@ -1175,7 +1557,7 @@ int main()
         return redirect_to("/profile");
     });
 
-    CROW_ROUTE(app, "/certificate").methods(crow::HTTPMethod::POST)
+    CROW_ROUTE(app, "/document").methods(crow::HTTPMethod::POST)
     ([](const crow::request& req)
     {
         int user_id = logged_in_id(req);
@@ -1188,7 +1570,7 @@ int main()
 
         crow::multipart::message form(req);
 
-        bool saved = save_certificate(user_id,
+        bool saved = save_document(user_id,
                                       student.username,
                                       form.get_part_by_name("title").body,
                                       form.get_part_by_name("file"));
@@ -1280,7 +1662,157 @@ int main()
         return redirect_to("/profile");
     });
 
-    CROW_ROUTE(app, "/certificate/delete").methods(crow::HTTPMethod::POST)
+    CROW_ROUTE(app, "/post").methods(crow::HTTPMethod::POST)
+    ([](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+        Student student;
+
+        if (user_id == 0 || !get_student(user_id, student))
+        {
+            return redirect_to("/login");
+        }
+
+        crow::multipart::message form(req);
+
+        add_post(user_id,
+                 student.username,
+                 form.get_part_by_name("body").body,
+                 form.get_part_by_name("file"));
+
+        return redirect_to("/profile");
+    });
+
+    CROW_ROUTE(app, "/post/delete").methods(crow::HTTPMethod::POST)
+    ([posted_id](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        std::string file_path;
+
+        // Only your own post can be found here, so only your own can go.
+        if (find_own_post(posted_id(req), user_id, file_path))
+        {
+            if (!file_path.empty())
+            {
+                std::remove(("." + file_path).c_str());
+            }
+
+            delete_post(posted_id(req), user_id);
+        }
+
+        return redirect_to("/profile");
+    });
+
+    CROW_ROUTE(app, "/messages")
+    ([](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        std::string html = read_file("templates/inbox.html");
+
+        html = replace_all(html, "{{NAV}}", nav_html(user_id));
+        html = replace_all(html, "{{INBOX}}", inbox_html(user_id));
+
+        return html_page(html);
+    });
+
+    CROW_ROUTE(app, "/messages/<int>")
+    ([](const crow::request& req, int other_id)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        Student other;
+
+        if (!get_student(other_id, other) || other_id == user_id)
+        {
+            return redirect_to("/messages");
+        }
+
+        std::string html = read_file("templates/chat.html");
+
+        html = replace_all(html, "{{NAV}}", nav_html(user_id));
+        html = replace_all(html, "{{OTHER_ID}}", std::to_string(other_id));
+        html = replace_all(html, "{{OTHER_NAME}}", escape_html(other.username));
+        html = replace_all(html, "{{OTHER_PHOTO}}", escape_html(other.photo));
+        html = replace_all(html, "{{MESSAGES}}", conversation_html(user_id, other_id));
+
+        // The box to type in is only shown if you are allowed to write.
+        if (can_message(user_id, other))
+        {
+            std::string box;
+            box += "<form class=\"search-bar\" action=\"/messages/send\" "
+                   "method=\"post\">";
+            box += "<input type=\"hidden\" name=\"id\" value=\""
+                 + std::to_string(other_id) + "\">";
+            box += "<input type=\"text\" name=\"body\" "
+                   "placeholder=\"Write a message\" required>";
+            box += "<button type=\"submit\">Send</button>";
+            box += "</form>";
+            html = replace_all(html, "{{SEND_BOX}}", box);
+        }
+        else
+        {
+            html = replace_all(html, "{{SEND_BOX}}",
+                "<p class=\"empty\">" + escape_html(other.username)
+                + " only accepts messages from their followers.</p>");
+        }
+
+        return html_page(html);
+    });
+
+    CROW_ROUTE(app, "/messages/send").methods(crow::HTTPMethod::POST)
+    ([](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        crow::query_string form("?" + req.body);
+        const char* id_text = form.get("id");
+        const char* body    = form.get("body");
+
+        if (!id_text || !body)
+        {
+            return redirect_to("/messages");
+        }
+
+        int other_id = std::atoi(id_text);
+        Student other;
+
+        if (!get_student(other_id, other))
+        {
+            return redirect_to("/messages");
+        }
+
+        // The rule is checked again here, not just when drawing the page.
+        if (can_message(user_id, other) && std::string(body).size() > 0)
+        {
+            add_message(user_id, other_id, body);
+        }
+
+        return redirect_to("/messages/" + std::to_string(other_id));
+    });
+
+    CROW_ROUTE(app, "/document/delete").methods(crow::HTTPMethod::POST)
     ([](const crow::request& req)
     {
         int user_id = logged_in_id(req);
@@ -1298,14 +1830,14 @@ int main()
             return redirect_to("/profile");
         }
 
-        int certificate_id = std::atoi(id_text);
+        int document_id = std::atoi(id_text);
         std::string file_path;
 
-        // Nothing happens unless the certificate is really yours.
-        if (find_own_certificate(certificate_id, user_id, file_path))
+        // Nothing happens unless the document is really yours.
+        if (find_own_document(document_id, user_id, file_path))
         {
             std::remove(("." + file_path).c_str());
-            delete_certificate(certificate_id, user_id);
+            delete_document(document_id, user_id);
         }
 
         return redirect_to("/profile");
