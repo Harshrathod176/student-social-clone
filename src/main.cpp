@@ -1123,6 +1123,34 @@ std::string follow_requests_html(int student_id)
 
 // Draws the rows of a posts query. The query must select:
 // post id, body, file_path, created_at, student id, username, photo.
+// Shows an uploaded file instead of only linking to it. A picture is shown as
+// a picture. A PDF is shown in the viewer the browser already has, with a
+// message inside as a fallback, because some phones cannot show one this way.
+std::string attachment_preview(const std::string& path)
+{
+    if (path.empty())
+    {
+        return "";
+    }
+
+    if (!is_pdf(path))
+    {
+        return "<a href=\"" + path + "\" target=\"_blank\">"
+               "<img class=\"post-image\" src=\"" + path + "\" alt=\"\"></a>";
+    }
+
+    std::string out;
+
+    out += "<div class=\"pdf-preview\">";
+    out += "<object data=\"" + path + "\" type=\"application/pdf\">";
+    out += "<p class=\"pdf-fallback\">This browser cannot show the PDF here. "
+           "Use the link below to open it.</p>";
+    out += "</object>";
+    out += "</div>";
+
+    return out;
+}
+
 std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
 {
     std::string list;
@@ -1176,19 +1204,14 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
 
         if (!file.empty())
         {
+            list += attachment_preview(file);
+
             if (is_pdf(file))
             {
                 list += "<a class=\"document-link\" href=\"" + file
                       + "\" target=\"_blank\">";
                 list += "<span class=\"pdf-tag\">PDF</span>";
-                list += "<span>Open attachment</span>";
-                list += "</a>";
-            }
-            else
-            {
-                // A screenshot is shown straight away instead of as a link.
-                list += "<a href=\"" + file + "\" target=\"_blank\">";
-                list += "<img class=\"post-image\" src=\"" + file + "\" alt=\"\">";
+                list += "<span>Open full size</span>";
                 list += "</a>";
             }
         }
@@ -1453,6 +1476,8 @@ std::string documents_html(int student_id, bool is_owner)
         std::string title = escape_html(column_text(stmt, 1));
         std::string path  = escape_html(column_text(stmt, 2));
 
+        // The title and the delete button sit on top, the file itself below.
+        list += "<div class=\"document-card\">";
         list += "<div class=\"document\">";
         list += "<a class=\"document-link\" href=\"" + path
               + "\" target=\"_blank\">";
@@ -1472,6 +1497,8 @@ std::string documents_html(int student_id, bool is_owner)
             list += "</form>";
         }
 
+        list += "</div>";
+        list += attachment_preview(path);
         list += "</div>";
     }
 
