@@ -58,3 +58,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     student_id INTEGER NOT NULL,
     FOREIGN KEY (student_id) REFERENCES students(id)
 );
+
+-- What a linked page says about itself, so a post can show a preview card.
+-- Saved once per address so the same page is not fetched again and again.
+CREATE TABLE IF NOT EXISTS link_previews (
+    url TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    image TEXT NOT NULL DEFAULT '',
+    site TEXT NOT NULL DEFAULT ''
+);

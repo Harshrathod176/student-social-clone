@@ -1,6 +1,7 @@
 #include <crow.h>
 #include <sqlite3.h>
 #include <sodium.h>
+#include <curl/curl.h>
 
 #include <ctime>
 #include <fstream>
@@ -573,6 +574,406 @@ void delete_document(int document_id, int student_id)
     sqlite3_finalize(stmt);
 }
 
+// ---------- link previews ----------
+
+// Finds the first web address in a piece of text.
+std::string first_url(const std::string& text)
+{
+    size_t start = text.find("http://");
+    size_t https = text.find("https://");
+
+    if (https != std::string::npos && (start == std::string::npos || https < start))
+    {
+        start = https;
+    }
+
+    if (start == std::string::npos)
+    {
+        return "";
+    }
+
+    size_t end = start;
+
+    while (end < text.size()
+           && text[end] != ' '
+           && text[end] != '\n'
+           && text[end] != '\r'
+           && text[end] != '\t')
+    {
+        end++;
+    }
+
+    std::string url = text.substr(start, end - start);
+
+    // A full stop or bracket at the very end is almost always punctuation.
+    while (!url.empty() && (url.back() == '.' || url.back() == ','
+                            || url.back() == ')' || url.back() == '!'))
+    {
+        url.pop_back();
+    }
+
+    return url.size() > 500 ? "" : url;
+}
+
+// True for addresses inside this computer or the local network. Fetching one
+// of those would let a student make the server read things that are not meant
+// to be public, so they are refused.
+bool is_private_ipv4(const std::string& ip)
+{
+    int a = 0, b = 0;
+
+    if (std::sscanf(ip.c_str(), "%d.%d", &a, &b) != 2)
+    {
+        return true;
+    }
+
+    if (a == 0 || a == 10 || a == 127) return true;
+    if (a == 169 && b == 254) return true;
+    if (a == 172 && b >= 16 && b <= 31) return true;
+    if (a == 192 && b == 168) return true;
+    if (a == 100 && b >= 64 && b <= 127) return true;
+
+    return false;
+}
+
+bool is_private_address(const std::string& address)
+{
+    if (address.empty())
+    {
+        return true;
+    }
+
+    std::string ip;
+
+    for (char c : address)
+    {
+        ip += std::tolower(c);
+    }
+
+    // An IPv6 address. Plain IPv4 rules do not apply to it.
+    if (ip.find(':') != std::string::npos)
+    {
+        if (ip == "::1" || ip == "::")
+        {
+            return true;
+        }
+
+        // Unique local (fc00::/7) and link local (fe80::/10).
+        if (ip.rfind("fc", 0) == 0 || ip.rfind("fd", 0) == 0
+            || ip.rfind("fe80", 0) == 0)
+        {
+            return true;
+        }
+
+        // An IPv4 address written inside an IPv6 one, like ::ffff:127.0.0.1,
+        // has to be checked with the IPv4 rules or it would slip through.
+        size_t last_colon = ip.rfind(':');
+
+        if (ip.find('.') != std::string::npos)
+        {
+            return is_private_ipv4(ip.substr(last_colon + 1));
+        }
+
+        return false;
+    }
+
+    return is_private_ipv4(ip);
+}
+
+// curl calls this once it knows the address it connected to, before asking
+// for the page. Returning the abort value stops the request there.
+int check_address(void*, char* primary_ip, char*, int, int)
+{
+    return is_private_address(primary_ip ? primary_ip : "")
+        ? CURL_PREREQFUNC_ABORT
+        : CURL_PREREQFUNC_OK;
+}
+
+const size_t MAX_PAGE_BYTES = 256 * 1024;
+
+size_t collect_page(char* data, size_t size, size_t count, void* target)
+{
+    std::string* page = static_cast<std::string*>(target);
+    size_t bytes = size * count;
+
+    if (page->size() + bytes > MAX_PAGE_BYTES)
+    {
+        return 0;
+    }
+
+    page->append(data, bytes);
+    return bytes;
+}
+
+// Downloads the start of a page. Everything here is deliberately limited:
+// http and https only, a few seconds, a few redirects, a small download,
+// and no addresses on this machine or the local network.
+std::string fetch_page(const std::string& url)
+{
+    CURL* curl = curl_easy_init();
+
+    if (!curl)
+    {
+        return "";
+    }
+
+    std::string page;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
+    curl_easy_setopt(curl, CURLOPT_PREREQFUNCTION, check_address);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect_page);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &page);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "StudentProfiles/1.0");
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+
+    curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    return page;
+}
+
+struct LinkPreview
+{
+    std::string url;
+    std::string title;
+    std::string description;
+    std::string image;
+    std::string site;
+};
+
+std::string lowercase_copy(std::string text)
+{
+    for (char& c : text)
+    {
+        c = std::tolower(c);
+    }
+
+    return text;
+}
+
+// Turns the few HTML codes that show up in page titles back into characters.
+std::string undo_html_codes(std::string text)
+{
+    text = replace_all(text, "&amp;", "&");
+    text = replace_all(text, "&quot;", "\"");
+    text = replace_all(text, "&#39;", "'");
+    text = replace_all(text, "&apos;", "'");
+    text = replace_all(text, "&lt;", "<");
+    text = replace_all(text, "&gt;", ">");
+    text = replace_all(text, "&nbsp;", " ");
+    return text;
+}
+
+// Pulls one <meta> value out of the page, for example og:title.
+std::string read_meta(const std::string& page, const std::string& name)
+{
+    std::string lower = lowercase_copy(page);
+    size_t at = lower.find("\"" + name + "\"");
+
+    if (at == std::string::npos)
+    {
+        return "";
+    }
+
+    // The content attribute can sit before or after the name attribute, so
+    // look from the start of this tag.
+    size_t tag_start = lower.rfind("<meta", at);
+    size_t tag_end = lower.find('>', at);
+
+    if (tag_start == std::string::npos || tag_end == std::string::npos)
+    {
+        return "";
+    }
+
+    size_t content = lower.find("content=", tag_start);
+
+    if (content == std::string::npos || content > tag_end)
+    {
+        return "";
+    }
+
+    size_t quote = page.find_first_of("\"'", content);
+
+    if (quote == std::string::npos || quote > tag_end)
+    {
+        return "";
+    }
+
+    size_t close = page.find(page[quote], quote + 1);
+
+    if (close == std::string::npos)
+    {
+        return "";
+    }
+
+    std::string value = page.substr(quote + 1, close - quote - 1);
+
+    return undo_html_codes(value).substr(0, 300);
+}
+
+std::string read_title_tag(const std::string& page)
+{
+    std::string lower = lowercase_copy(page);
+    size_t start = lower.find("<title");
+
+    if (start == std::string::npos)
+    {
+        return "";
+    }
+
+    start = lower.find('>', start);
+    size_t end = lower.find("</title", start);
+
+    if (start == std::string::npos || end == std::string::npos)
+    {
+        return "";
+    }
+
+    std::string value = page.substr(start + 1, end - start - 1);
+
+    // Tidy up newlines and runs of spaces.
+    std::string clean;
+
+    for (char c : value)
+    {
+        char ch = (c == '\n' || c == '\r' || c == '\t') ? ' ' : c;
+
+        if (ch == ' ' && (clean.empty() || clean.back() == ' '))
+        {
+            continue;
+        }
+
+        clean += ch;
+    }
+
+    while (!clean.empty() && clean.back() == ' ')
+    {
+        clean.pop_back();
+    }
+
+    return undo_html_codes(clean).substr(0, 300);
+}
+
+// The part of the address a person recognises, like github.com
+std::string domain_of(const std::string& url)
+{
+    size_t start = url.find("//");
+
+    if (start == std::string::npos)
+    {
+        return "";
+    }
+
+    start += 2;
+    size_t end = url.find('/', start);
+    std::string host = url.substr(start, end == std::string::npos
+                                         ? std::string::npos
+                                         : end - start);
+
+    if (host.rfind("www.", 0) == 0)
+    {
+        host = host.substr(4);
+    }
+
+    return host;
+}
+
+void save_link_preview(const LinkPreview& p)
+{
+    const char* sql =
+        "INSERT OR REPLACE INTO link_previews(url, title, description, image, site) "
+        "VALUES(?, ?, ?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, p.url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, p.title.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, p.description.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, p.image.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, p.site.c_str(), -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+bool get_link_preview(const std::string& url, LinkPreview& out)
+{
+    const char* sql =
+        "SELECT url, title, description, image, site FROM link_previews "
+        "WHERE url = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, url.c_str(), -1, SQLITE_TRANSIENT);
+
+    bool found = false;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        out.url         = column_text(stmt, 0);
+        out.title       = column_text(stmt, 1);
+        out.description = column_text(stmt, 2);
+        out.image       = column_text(stmt, 3);
+        out.site        = column_text(stmt, 4);
+        found = true;
+    }
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+// Fetches a page once and remembers what it said about itself.
+void remember_link(const std::string& url)
+{
+    LinkPreview existing;
+
+    if (url.empty() || get_link_preview(url, existing))
+    {
+        return;
+    }
+
+    std::string page = fetch_page(url);
+
+    LinkPreview p;
+    p.url  = url;
+    p.site = domain_of(url);
+
+    if (!page.empty())
+    {
+        p.title = read_meta(page, "og:title");
+
+        if (p.title.empty())
+        {
+            p.title = read_title_tag(page);
+        }
+
+        p.description = read_meta(page, "og:description");
+
+        if (p.description.empty())
+        {
+            p.description = read_meta(page, "description");
+        }
+
+        std::string image = read_meta(page, "og:image");
+
+        // Only a normal web address is kept, never anything else.
+        if (image.rfind("http://", 0) == 0 || image.rfind("https://", 0) == 0)
+        {
+            p.image = image;
+        }
+    }
+
+    // The row is saved even when nothing was found, so the same address is
+    // not fetched again on every visit.
+    save_link_preview(p);
+}
+
 // ---------- posts ----------
 
 // A post is a short update. The file is optional.
@@ -612,6 +1013,10 @@ bool add_post(int student_id,
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+
+    // Look the link up once, now, so showing the post later is just a read.
+    remember_link(first_url(body));
+
     return true;
 }
 
@@ -1126,6 +1531,48 @@ std::string follow_requests_html(int student_id)
 // Shows an uploaded file instead of only linking to it. A picture is shown as
 // a picture. A PDF is shown in the viewer the browser already has, with a
 // message inside as a fallback, because some phones cannot show one this way.
+// The preview card under a post that contains a link.
+std::string link_card_html(const std::string& body)
+{
+    LinkPreview p;
+
+    if (!get_link_preview(first_url(body), p) || p.title.empty())
+    {
+        return "";
+    }
+
+    std::string url   = escape_html(p.url);
+    std::string title = escape_html(p.title);
+    std::string desc  = escape_html(p.description);
+    std::string site  = escape_html(p.site);
+    std::string image = escape_html(p.image);
+
+    std::string card;
+
+    card += "<a class=\"link-card\" href=\"" + url
+          + "\" target=\"_blank\" rel=\"noopener noreferrer\">";
+
+    if (!image.empty())
+    {
+        card += "<img class=\"link-card-image\" src=\"" + image
+              + "\" alt=\"\" loading=\"lazy\">";
+    }
+
+    card += "<span class=\"link-card-text\">";
+    card += "<span class=\"small\">" + site + "</span>";
+    card += "<b>" + title + "</b>";
+
+    if (!desc.empty())
+    {
+        card += "<span class=\"link-card-desc\">" + desc + "</span>";
+    }
+
+    card += "</span>";
+    card += "</a>";
+
+    return card;
+}
+
 std::string attachment_preview(const std::string& path)
 {
     if (path.empty())
@@ -1201,6 +1648,8 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
         list += "</div>";
 
         list += "<p class=\"post-body\">" + linkify(body) + "</p>";
+
+        list += link_card_html(column_text(stmt, 1));
 
         if (!file.empty())
         {
@@ -1683,6 +2132,8 @@ crow::response profile_page(const Student& student,
 
 int main()
 {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
     if (sodium_init() < 0)
     {
         std::cerr << "Could not start the security library.\n";

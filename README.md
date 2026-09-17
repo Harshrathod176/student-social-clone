@@ -36,8 +36,9 @@ only you can see.
 
 - C++ with the Crow library for the web server
 - libsodium for password hashing and for making session tokens
-- SQLite for the database (six tables: `students`, `documents`, `posts`,
-  `messages`, `follows`, `sessions`)
+- libcurl (the copy that comes with macOS) for reading link previews
+- SQLite for the database (seven tables: `students`, `documents`, `posts`,
+  `messages`, `follows`, `sessions`, `link_previews`)
 - Plain HTML forms and one CSS file (the only JavaScript is the one-line
   "are you sure?" box on the delete button)
 
@@ -112,9 +113,27 @@ tabs under it:
   private profiles you have been accepted to follow.
 - **Following** shows only the people you follow.
 
-A post can carry a PDF or a picture. A picture is shown in the post itself, so
-a screenshot of what you are building appears straight away, and any `http` or
-`https` address you type becomes a link you can click. Posts also appear on
+A post can carry a PDF or a picture. A picture is shown in the post itself, a
+PDF is shown in the browser's own viewer with a link to open it full size, and
+any `http` or `https` address you type becomes a link you can click.
+
+Paste a link and a preview card appears under the post, with the site name, the
+page title and its picture. The page is fetched once, when the post is written,
+and what it says about itself is kept in `link_previews`, so showing the post
+again is only a database read.
+
+Fetching an address a student typed is the one place where the server goes out
+and reads something on somebody else's behalf, so it is kept on a short lead:
+
+- Only `http` and `https`, on the first request and on any redirect.
+- Three redirects, five seconds, and at most 256 KB downloaded.
+- **Addresses on this machine or the local network are refused.** Without this,
+  a student could paste `http://127.0.0.1:8090/` or a cloud provider's internal
+  address and make the server read something private and show it back to them.
+  The check runs on the address actually connected to, not on the text of the
+  link, so a name that points at a private address is caught too. Both IPv4 and
+  IPv6 are handled, including the `::ffff:127.0.0.1` way of writing an IPv4
+  address inside an IPv6 one. Posts also appear on
 your profile, under the same visibility rule as the rest of it.
 
 The page is laid out with the feed on the left and a narrow column on the right

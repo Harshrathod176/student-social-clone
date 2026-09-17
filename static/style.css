@@ -1037,3 +1037,62 @@ a.request:hover {
         height: 300px;
     }
 }
+
+/* ---------- link preview card ---------- */
+
+.link-card {
+    display: flex;
+    align-items: stretch;
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    text-decoration: none;
+    color: var(--text);
+    background: var(--page);
+}
+
+.link-card:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* A small picture on the side, so a wide or a tall image both look fine. */
+.link-card-image {
+    flex: 0 0 116px;
+    width: 116px;
+    object-fit: cover;
+    background: var(--border);
+}
+
+.link-card-text {
+    display: block;
+    padding: 12px 14px;
+    min-width: 0;
+}
+
+.link-card-text b {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin: 3px 0;
+    line-height: 1.35;
+}
+
+.link-card-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+@media (max-width: 480px) {
+    .link-card-image {
+        flex-basis: 84px;
+        width: 84px;
+    }
+}
