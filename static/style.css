@@ -768,3 +768,80 @@ a.request {
 a.request:hover {
     background: var(--accent-soft);
 }
+
+/* ---------- home page tabs and composer ---------- */
+
+.tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    margin: 22px 0 18px;
+}
+
+.tab {
+    padding: 10px 16px;
+    text-decoration: none;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 15px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+}
+
+.tab:hover {
+    color: var(--text);
+}
+
+.tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.composer textarea {
+    border: 0;
+    background: transparent;
+    padding: 4px 0;
+    font-size: 16px;
+}
+
+.composer textarea:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+.composer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: 6px;
+}
+
+.composer-foot input[type="file"] {
+    width: auto;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-size: 13px;
+}
+
+.composer-foot button {
+    margin: 0;
+}
+
+.post-image {
+    display: block;
+    width: 100%;
+    max-height: 420px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+
+.post-body a {
+    color: var(--accent);
+    word-break: break-all;
+}

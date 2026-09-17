@@ -50,3 +50,11 @@ CREATE TABLE IF NOT EXISTS follows (
     FOREIGN KEY (follower_id) REFERENCES students(id),
     FOREIGN KEY (following_id) REFERENCES students(id)
 );
+
+-- A login gives you a long random token. The token is what the cookie holds,
+-- so a cookie cannot simply be edited to become another student.
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    student_id INTEGER NOT NULL,
+    FOREIGN KEY (student_id) REFERENCES students(id)
+);

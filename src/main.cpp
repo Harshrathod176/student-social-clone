@@ -1,5 +1,6 @@
 #include <crow.h>
 #include <sqlite3.h>
+#include <sodium.h>
 
 #include <ctime>
 #include <fstream>
@@ -50,6 +51,48 @@ std::string escape_html(const std::string& text)
     return out;
 }
 
+// Turns a web address inside a post into a link you can click. It runs after
+// escape_html, and only http and https are accepted, so no other kind of
+// address can be smuggled in.
+std::string linkify(const std::string& text)
+{
+    std::string out;
+    size_t i = 0;
+
+    while (i < text.size())
+    {
+        bool is_link = text.compare(i, 7, "http://") == 0
+                    || text.compare(i, 8, "https://") == 0;
+
+        if (!is_link)
+        {
+            out += text[i];
+            i++;
+            continue;
+        }
+
+        size_t end = i;
+
+        while (end < text.size()
+               && text[end] != ' '
+               && text[end] != '\n'
+               && text[end] != '<'
+               && text[end] != '"')
+        {
+            end++;
+        }
+
+        std::string url = text.substr(i, end - i);
+
+        out += "<a href=\"" + url + "\" target=\"_blank\" "
+               "rel=\"noopener noreferrer\">" + url + "</a>";
+
+        i = end;
+    }
+
+    return out;
+}
+
 crow::response html_page(const std::string& html)
 {
     crow::response res(200, html);
@@ -82,25 +125,40 @@ std::string get_cookie(const crow::request& req, const std::string& name)
     return cookies.substr(start, end - start);
 }
 
-// Returns 0 when nobody is logged in.
-int logged_in_id(const crow::request& req)
+// Turns a password into an Argon2 hash. The real password is never stored.
+std::string hash_password(const std::string& password)
 {
-    std::string value = get_cookie(req, "user_id");
+    char hash[crypto_pwhash_STRBYTES];
 
-    if (value.empty())
+    if (crypto_pwhash_str(hash,
+                          password.c_str(),
+                          password.size(),
+                          crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                          crypto_pwhash_MEMLIMIT_INTERACTIVE) != 0)
     {
-        return 0;
+        return "";
     }
 
-    for (char c : value)
-    {
-        if (c < '0' || c > '9')
-        {
-            return 0;
-        }
-    }
+    return std::string(hash);
+}
 
-    return std::stoi(value);
+bool password_matches(const std::string& stored, const std::string& password)
+{
+    return crypto_pwhash_str_verify(stored.c_str(),
+                                    password.c_str(),
+                                    password.size()) == 0;
+}
+
+// A long random string that nobody can guess.
+std::string make_session_token()
+{
+    unsigned char bytes[32];
+    char text[65];
+
+    randombytes_buf(bytes, sizeof bytes);
+    sodium_bin2hex(text, sizeof text, bytes, sizeof bytes);
+
+    return std::string(text);
 }
 
 // Only letters, digits and underscore, because the username is also
@@ -181,6 +239,14 @@ std::string photo_file_name(const std::string& username,
     return username + "_" + std::to_string(std::time(nullptr)) + extension;
 }
 
+// Uploads bigger than this are refused, so one visitor cannot fill the disk.
+const size_t MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+bool upload_too_big(const crow::multipart::part& file)
+{
+    return file.body.size() > MAX_UPLOAD_BYTES;
+}
+
 // Saves an uploaded file inside static/ so the browser can open it,
 // and gives back the address to store in the database.
 std::string save_upload(const crow::multipart::part& file,
@@ -212,6 +278,61 @@ std::string column_text(sqlite3_stmt* stmt, int index)
 {
     const unsigned char* text = sqlite3_column_text(stmt, index);
     return text ? reinterpret_cast<const char*>(text) : "";
+}
+
+// ---------- sessions ----------
+
+void create_session(const std::string& token, int student_id)
+{
+    const char* sql = "INSERT INTO sessions(token, student_id) VALUES(?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void delete_session(const std::string& token)
+{
+    const char* sql = "DELETE FROM sessions WHERE token = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// Looks the cookie up in the sessions table. An invented cookie finds no row,
+// so it gives 0 and the visitor stays logged out.
+int logged_in_id(const crow::request& req)
+{
+    std::string token = get_cookie(req, "session");
+
+    if (token.empty())
+    {
+        return 0;
+    }
+
+    const char* sql = "SELECT student_id FROM sessions WHERE token = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+
+    int id = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        id = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return id;
 }
 
 bool username_taken(const std::string& username)
@@ -306,24 +427,57 @@ bool get_student(int id, Student& student)
 }
 
 // Checks the login details and gives back the student id, or 0.
+void set_password(int student_id, const std::string& hash)
+{
+    const char* sql = "UPDATE students SET password = ? WHERE id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 int check_login(const std::string& username, const std::string& password)
 {
-    const char* sql = "SELECT id FROM students WHERE username = ? AND password = ?;";
+    const char* sql = "SELECT id, password FROM students WHERE username = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_TRANSIENT);
 
     int id = 0;
+    std::string stored;
 
     if (sqlite3_step(stmt) == SQLITE_ROW)
     {
         id = sqlite3_column_int(stmt, 0);
+        stored = column_text(stmt, 1);
     }
 
     sqlite3_finalize(stmt);
-    return id;
+
+    if (id == 0)
+    {
+        return 0;
+    }
+
+    // Accounts made before passwords were hashed still hold plain text.
+    // They are checked once and then written back as a hash.
+    if (stored.rfind("$argon2", 0) != 0)
+    {
+        if (stored != password)
+        {
+            return 0;
+        }
+
+        set_password(id, hash_password(password));
+        return id;
+    }
+
+    return password_matches(stored, password) ? id : 0;
 }
 
 void add_document(int student_id,
@@ -365,7 +519,8 @@ bool save_document(int student_id,
 {
     std::string extension = document_extension(uploaded_file_name(file));
 
-    if (title.empty() || file.body.empty() || extension.empty())
+    if (title.empty() || file.body.empty() || extension.empty()
+        || upload_too_big(file))
     {
         return false;
     }
@@ -426,7 +581,7 @@ bool add_post(int student_id,
               const std::string& body,
               const crow::multipart::part& file)
 {
-    if (body.empty())
+    if (body.empty() || body.size() > 2000)
     {
         return false;
     }
@@ -437,7 +592,7 @@ bool add_post(int student_id,
     {
         std::string extension = document_extension(uploaded_file_name(file));
 
-        if (extension.empty())
+        if (extension.empty() || upload_too_big(file))
         {
             return false;
         }
@@ -993,16 +1148,25 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
             list += "</a>";
         }
 
-        list += "<p class=\"post-body\">" + body + "</p>";
+        list += "<p class=\"post-body\">" + linkify(body) + "</p>";
 
         if (!file.empty())
         {
-            std::string kind = is_pdf(file) ? "PDF" : "IMG";
-            list += "<a class=\"document-link\" href=\"" + file
-                  + "\" target=\"_blank\">";
-            list += "<span class=\"pdf-tag\">" + kind + "</span>";
-            list += "<span>Open attachment</span>";
-            list += "</a>";
+            if (is_pdf(file))
+            {
+                list += "<a class=\"document-link\" href=\"" + file
+                      + "\" target=\"_blank\">";
+                list += "<span class=\"pdf-tag\">PDF</span>";
+                list += "<span>Open attachment</span>";
+                list += "</a>";
+            }
+            else
+            {
+                // A screenshot is shown straight away instead of as a link.
+                list += "<a href=\"" + file + "\" target=\"_blank\">";
+                list += "<img class=\"post-image\" src=\"" + file + "\" alt=\"\">";
+                list += "</a>";
+            }
         }
 
         list += "<div class=\"post-foot\">";
@@ -1048,12 +1212,43 @@ std::string profile_posts_html(int student_id, int viewer_id)
     return list;
 }
 
-// The home page feed: posts by the people you follow.
-std::string feed_html(int viewer_id)
+// The "Everyone" tab. Posts from public profiles, plus your own, plus the
+// private profiles you have been accepted to follow.
+std::string everyone_feed_html(int viewer_id)
+{
+    const char* sql =
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "FROM posts p JOIN students s ON s.id = p.student_id "
+        "WHERE s.is_private = 0 "
+        "   OR s.id = ? "
+        "   OR EXISTS (SELECT 1 FROM follows f "
+        "               WHERE f.follower_id = ? AND f.following_id = s.id "
+        "                 AND f.status = 'accepted') "
+        "ORDER BY p.id DESC LIMIT 20;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, viewer_id);
+    sqlite3_bind_int(stmt, 2, viewer_id);
+
+    std::string list = render_posts(stmt, viewer_id, true);
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">No posts yet. Be the first to write one.</p>";
+    }
+
+    return list;
+}
+
+// The "Following" tab. Only the people you follow.
+std::string following_feed_html(int viewer_id)
 {
     if (viewer_id == 0)
     {
-        return "";
+        return "<p class=\"empty\">Log in to see posts from people you follow.</p>";
     }
 
     const char* sql =
@@ -1062,7 +1257,7 @@ std::string feed_html(int viewer_id)
         "JOIN students s ON s.id = p.student_id "
         "JOIN follows f ON f.following_id = p.student_id "
         "WHERE f.follower_id = ? AND f.status = 'accepted' "
-        "ORDER BY p.id DESC LIMIT 10;";
+        "ORDER BY p.id DESC LIMIT 20;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -1074,16 +1269,54 @@ std::string feed_html(int viewer_id)
 
     if (list.empty())
     {
+        return "<p class=\"empty\">Nothing here yet. Follow some students and "
+               "their posts will show up.</p>";
+    }
+
+    return list;
+}
+
+// The two tabs above the feed.
+std::string tabs_html(bool following)
+{
+    std::string tabs;
+
+    tabs += "<div class=\"tabs\">";
+    tabs += "<a class=\"tab";
+    tabs += following ? "" : " active";
+    tabs += "\" href=\"/\">Everyone</a>";
+    tabs += "<a class=\"tab";
+    tabs += following ? " active" : "";
+    tabs += "\" href=\"/?tab=following\">Following</a>";
+    tabs += "</div>";
+
+    return tabs;
+}
+
+// The box at the top of the home page for writing a post.
+std::string composer_html(int viewer_id)
+{
+    if (viewer_id == 0)
+    {
         return "";
     }
 
-    std::string section;
-    section += "<h2>From people you follow</h2>";
-    section += "<p class=\"section-note\">The newest updates from students "
-               "you follow.</p>";
-    section += list;
+    std::string box;
 
-    return section;
+    box += "<div class=\"panel composer\">";
+    box += "<form action=\"/post\" method=\"post\" "
+           "enctype=\"multipart/form-data\">";
+    box += "<textarea name=\"body\" rows=\"3\" "
+           "placeholder=\"What are you working on? You can paste a link too.\" "
+           "required></textarea>";
+    box += "<div class=\"composer-foot\">";
+    box += "<input type=\"file\" name=\"file\" accept=\".pdf,.jpg,.jpeg,.png\">";
+    box += "<button type=\"submit\">Post</button>";
+    box += "</div>";
+    box += "</form>";
+    box += "</div>";
+
+    return box;
 }
 
 std::string chip_row_html(const Student& student)
@@ -1169,18 +1402,6 @@ std::string owner_section_html(bool is_owner,
     }
 
     std::string form;
-
-    form += "<div class=\"panel\">";
-    form += "<h3>Write a post</h3>";
-    form += "<form action=\"/post\" method=\"post\" "
-            "enctype=\"multipart/form-data\">";
-    form += "<textarea name=\"body\" rows=\"3\" "
-            "placeholder=\"What are you working on?\" required></textarea>";
-    form += "<label>Attach a file (optional)</label>";
-    form += "<input type=\"file\" name=\"file\" accept=\".pdf,.jpg,.jpeg,.png\">";
-    form += "<button type=\"submit\">Post</button>";
-    form += "</form>";
-    form += "</div>";
 
     form += "<div class=\"panel\">";
     form += "<h3>Follow requests</h3>";
@@ -1341,6 +1562,12 @@ crow::response profile_page(const Student& student,
 
 int main()
 {
+    if (sodium_init() < 0)
+    {
+        std::cerr << "Could not start the security library.\n";
+        return 1;
+    }
+
     if (sqlite3_open("data/students.db", &db) != SQLITE_OK)
     {
         std::cerr << "Could not open the database.\n";
@@ -1362,12 +1589,23 @@ int main()
     {
         int user_id = logged_in_id(req);
 
+        const char* tab = req.url_params.get("tab");
+        bool following = tab && std::string(tab) == "following";
+
         std::string html = read_file("templates/home.html");
 
         html = replace_all(html, "{{NAV}}", nav_html(user_id));
-        html = replace_all(html, "{{FEED}}", feed_html(user_id));
+        html = replace_all(html, "{{COMPOSER}}", composer_html(user_id));
+        html = replace_all(html, "{{TABS}}", tabs_html(following));
+        html = replace_all(html, "{{FEED}}",
+                           following ? following_feed_html(user_id)
+                                     : everyone_feed_html(user_id));
         html = replace_all(html, "{{RECOMMENDED}}", recommended_html(user_id));
         html = replace_all(html, "{{NEWEST}}", newest_students_html(user_id));
+
+        // The big welcome banner is only for visitors who are not logged in.
+        html = replace_all(html, "{{HERO}}",
+            user_id == 0 ? read_file("templates/hero.html") : "");
 
         return html_page(html);
     });
@@ -1398,9 +1636,10 @@ int main()
                              "Username can only use letters, numbers and _ .");
         }
 
-        if (password.empty())
+        if (password.size() < 6)
         {
-            return form_page("templates/signup.html", 0, "Please enter a password.");
+            return form_page("templates/signup.html", 0,
+                             "Please use a password of at least 6 characters.");
         }
 
         if (username_taken(student.username))
@@ -1418,10 +1657,16 @@ int main()
                              "Please choose a .jpg or .png profile picture.");
         }
 
+        if (upload_too_big(picture))
+        {
+            return form_page("templates/signup.html", 0,
+                             "That picture is too big. The limit is 5 MB.");
+        }
+
         student.photo = save_upload(picture,
                                     photo_file_name(student.username, extension));
 
-        if (!add_student(student, password))
+        if (!add_student(student, hash_password(password)))
         {
             return form_page("templates/signup.html", 0,
                              "Could not save your profile. Please try again.");
@@ -1464,16 +1709,26 @@ int main()
             return form_page("templates/login.html", 0, "Wrong username or password.");
         }
 
+        // HttpOnly keeps JavaScript away from the cookie, and SameSite stops
+        // another website making your browser send it.
+        std::string token = make_session_token();
+        create_session(token, id);
+
         crow::response res = redirect_to("/profile");
-        res.set_header("Set-Cookie", "user_id=" + std::to_string(id) + "; Path=/");
+        res.set_header("Set-Cookie",
+                       "session=" + token + "; Path=/; HttpOnly; SameSite=Strict");
         return res;
     });
 
     CROW_ROUTE(app, "/logout")
-    ([]
+    ([](const crow::request& req)
     {
+        // The row is removed as well, so an old cookie is useless afterwards.
+        delete_session(get_cookie(req, "session"));
+
         crow::response res = redirect_to("/login");
-        res.set_header("Set-Cookie", "user_id=; Path=/; Max-Age=0");
+        res.set_header("Set-Cookie",
+                       "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
         return res;
     });
 
@@ -1543,6 +1798,11 @@ int main()
             if (extension.empty())
             {
                 return edit_page(student, "A picture must be a .jpg or .png file.");
+            }
+
+            if (upload_too_big(picture))
+            {
+                return edit_page(student, "That picture is too big. The limit is 5 MB.");
             }
 
             student.photo = save_upload(picture,
@@ -1680,7 +1940,7 @@ int main()
                  form.get_part_by_name("body").body,
                  form.get_part_by_name("file"));
 
-        return redirect_to("/profile");
+        return redirect_to("/");
     });
 
     CROW_ROUTE(app, "/post/delete").methods(crow::HTTPMethod::POST)
@@ -1804,7 +2064,9 @@ int main()
         }
 
         // The rule is checked again here, not just when drawing the page.
-        if (can_message(user_id, other) && std::string(body).size() > 0)
+        if (can_message(user_id, other)
+            && !std::string(body).empty()
+            && std::string(body).size() <= 2000)
         {
             add_message(user_id, other_id, body);
         }

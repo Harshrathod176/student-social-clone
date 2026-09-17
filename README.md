@@ -35,8 +35,9 @@ only you can see.
 ## What it uses
 
 - C++ with the Crow library for the web server
-- SQLite for the database (five tables: `students`, `documents`, `posts`,
-  `messages`, `follows`)
+- libsodium for password hashing and for making session tokens
+- SQLite for the database (six tables: `students`, `documents`, `posts`,
+  `messages`, `follows`, `sessions`)
 - Plain HTML forms and one CSS file (the only JavaScript is the one-line
   "are you sure?" box on the delete button)
 
@@ -104,10 +105,51 @@ twice.
 
 ## Posts
 
-A post is a line or two of text with an optional PDF or picture. Posts show on
-the profile, and follow the same visibility rule as everything else: on a
-private profile only accepted followers see them. The home page also shows a
-feed of the newest posts from the people you follow.
+The home page is where posts are written and read. The box at the top writes a
+post, and there are two tabs under it:
+
+- **Everyone** shows posts from public profiles, your own posts, and posts from
+  private profiles you have been accepted to follow.
+- **Following** shows only the people you follow.
+
+A post can carry a PDF or a picture. A picture is shown in the post itself, so
+a screenshot of what you are building appears straight away, and any `http` or
+`https` address you type becomes a link you can click. Posts also appear on
+your profile, under the same visibility rule as the rest of it.
+
+## Security
+
+This started out with two bad problems, and they are worth writing down because
+they are the sort of thing a marker asks about.
+
+**The login cookie used to hold the student id.** It said `user_id=1`, so
+anybody could type that into their browser and become student 1 without a
+password: read their messages, edit their profile, delete their documents. Now
+a login makes a 64 character random token, stores it in the `sessions` table
+and puts only the token in the cookie. A made up token matches no row, so it
+gives nobody. Logging out deletes the row, so an old cookie stops working.
+
+**Passwords were stored as plain text.** Anybody who opened the database file
+could read them. They are now hashed with Argon2 through libsodium, and the
+hash cannot be turned back into the password. Accounts made before this change
+are upgraded automatically the first time they log in.
+
+The cookie is also marked `HttpOnly`, so page scripts cannot read it, and
+`SameSite=Strict`, so another website cannot make your browser send it.
+
+Other things that were tightened:
+
+- Every piece of text a student types is escaped before it is put on a page, so
+  a post containing `<script>` is shown as text and does not run. Links are
+  made clickable only after that escaping, and only `http` and `https` are
+  accepted, so a `javascript:` address is never turned into a link.
+- Uploads are limited to 5 MB and posts and messages to 2000 characters, so one
+  visitor cannot fill the disk.
+- Every query uses `?` placeholders with `sqlite3_bind_text`, never text glued
+  into the SQL, so a username like `'; DROP TABLE students; --` is treated as
+  an ordinary name.
+- Rules are checked on the server every time, not just hidden in the page. A
+  delete or a message is refused even if the request is made by hand.
 
 ## Direct messages
 
