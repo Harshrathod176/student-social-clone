@@ -1,0 +1,12 @@
+# Build output
+build/
+
+# The database holds real student details and plain text passwords.
+data/*.db
+
+# Uploaded profile pictures and certificate PDFs belong to real people.
+static/uploads/*
+!static/uploads/.gitkeep
+
+# macOS
+.DS_Store

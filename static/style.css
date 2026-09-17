@@ -1,0 +1,550 @@
+/* Colours and sizes are kept in one place so they are easy to change. */
+:root {
+    --accent: #4f46e5;
+    --accent-dark: #4338ca;
+    --accent-soft: #eef2ff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --surface: #ffffff;
+    --page: #f8fafc;
+    --radius: 14px;
+    --shadow: 0 1px 3px rgba(15, 23, 42, 0.06),
+              0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial,
+                 sans-serif;
+    line-height: 1.6;
+    overflow-wrap: break-word;
+}
+
+/* ---------- navigation bar ---------- */
+
+nav {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.brand {
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--text);
+    text-decoration: none;
+    margin-right: auto;
+}
+
+.brand span {
+    color: var(--accent);
+}
+
+nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 8px;
+}
+
+nav a:hover {
+    color: var(--text);
+    background: var(--page);
+}
+
+nav a.nav-button {
+    background: var(--accent);
+    color: #ffffff;
+}
+
+nav a.nav-button:hover {
+    background: var(--accent-dark);
+}
+
+/* ---------- page layout ---------- */
+
+.wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+}
+
+.narrow {
+    max-width: 520px;
+}
+
+h1 {
+    font-size: 30px;
+    margin: 0 0 8px;
+}
+
+h2 {
+    font-size: 21px;
+    margin: 40px 0 4px;
+}
+
+h3 {
+    font-size: 16px;
+    margin: 0 0 10px;
+}
+
+.section-note,
+.muted {
+    color: var(--muted);
+    margin: 0 0 16px;
+}
+
+.empty {
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    text-align: center;
+}
+
+/* ---------- home page banner ---------- */
+
+.hero {
+    background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
+    color: #ffffff;
+    border-radius: 18px;
+    padding: 44px 36px;
+    margin-bottom: 8px;
+}
+
+.hero h1 {
+    font-size: 34px;
+    margin-bottom: 10px;
+}
+
+.hero p {
+    margin: 0 0 22px;
+    font-size: 17px;
+    opacity: 0.92;
+    max-width: 480px;
+}
+
+.hero-button {
+    display: inline-block;
+    background: #ffffff;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    padding: 11px 22px;
+    border-radius: 10px;
+}
+
+.hero-button:hover {
+    background: var(--accent-soft);
+}
+
+/* ---------- grid of student cards ---------- */
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 18px;
+    margin-top: 16px;
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 16px;
+    text-align: center;
+    text-decoration: none;
+    color: var(--text);
+    box-shadow: var(--shadow);
+    transition: transform 0.15s, border-color 0.15s;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+}
+
+.card-photo {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--accent-soft);
+    margin-bottom: 12px;
+}
+
+.card h3 {
+    margin: 0 0 2px;
+    font-size: 16px;
+}
+
+.card .muted {
+    margin: 0 0 10px;
+    font-size: 14px;
+}
+
+.chip {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 999px;
+    padding: 3px 11px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* ---------- panels, forms and buttons ---------- */
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 26px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    margin: 14px 0 6px;
+}
+
+input,
+textarea {
+    width: 100%;
+    font: inherit;
+    color: var(--text);
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 13px;
+}
+
+input:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+textarea {
+    resize: vertical;
+}
+
+button {
+    font: inherit;
+    font-weight: 600;
+    margin-top: 18px;
+    padding: 11px 22px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #ffffff;
+    cursor: pointer;
+}
+
+button:hover {
+    background: var(--accent-dark);
+}
+
+/* Puts two fields side by side on wide screens. */
+.two-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 16px;
+}
+
+.divider {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 26px 0 0;
+}
+
+.message {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin: 0;
+    font-size: 14px;
+}
+
+.message:empty {
+    display: none;
+}
+
+.form-footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 18px;
+}
+
+/* ---------- search bar ---------- */
+
+.search-bar {
+    display: flex;
+    gap: 10px;
+}
+
+.search-bar input {
+    flex: 1;
+}
+
+.search-bar button {
+    margin-top: 0;
+}
+
+/* ---------- profile page ---------- */
+
+.profile-head {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.profile-photo {
+    width: 116px;
+    height: 116px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--accent-soft);
+    border: 3px solid var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.profile-head h1 {
+    margin: 0 0 6px;
+}
+
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.bio {
+    margin: 22px 0 0;
+    white-space: pre-wrap;
+}
+
+.certificate {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+}
+
+.certificate:hover {
+    border-color: var(--accent);
+}
+
+.certificate-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    text-decoration: none;
+    color: var(--text);
+}
+
+.certificate form {
+    display: block;
+    margin: 0;
+}
+
+.delete-button {
+    margin: 0;
+    background: transparent;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.delete-button:hover {
+    background: #fee2e2;
+}
+
+.pdf-tag {
+    background: #fee2e2;
+    color: #b91c1c;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+}
+
+/* ---------- phones ---------- */
+
+@media (max-width: 600px) {
+    /* The brand sits on its own line and the links share the line below it. */
+    nav {
+        justify-content: center;
+        gap: 4px;
+        padding: 12px 14px;
+    }
+
+    .brand {
+        width: 100%;
+        margin-right: 0;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+
+    nav a {
+        font-size: 14px;
+        padding: 7px 10px;
+    }
+
+    .wrap {
+        padding: 22px 16px 48px;
+    }
+
+    h1 {
+        font-size: 26px;
+    }
+
+    h2 {
+        font-size: 19px;
+        margin-top: 32px;
+    }
+
+    .hero {
+        padding: 30px 22px;
+        border-radius: 14px;
+    }
+
+    .hero h1 {
+        font-size: 26px;
+    }
+
+    .hero p {
+        font-size: 15px;
+    }
+
+    /* Two smaller cards still fit side by side on a phone. */
+    .grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+    }
+
+    .card {
+        padding: 18px 10px;
+    }
+
+    .card-photo {
+        width: 62px;
+        height: 62px;
+        margin-bottom: 10px;
+    }
+
+    .card h3 {
+        font-size: 15px;
+    }
+
+    .card .muted {
+        font-size: 13px;
+    }
+
+    .chip {
+        font-size: 12px;
+    }
+
+    .panel {
+        padding: 20px 16px;
+    }
+
+    .two-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .profile-head {
+        flex-direction: column;
+        text-align: center;
+        gap: 16px;
+    }
+
+    .profile-photo {
+        width: 100px;
+        height: 100px;
+    }
+
+    .chip-row {
+        justify-content: center;
+    }
+
+    /* The search button drops under the box instead of squashing it. */
+    .search-bar {
+        flex-direction: column;
+    }
+
+    .search-bar button {
+        margin-top: 4px;
+    }
+}
+
+/* Very narrow phones. */
+@media (max-width: 360px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ---------- edit profile ---------- */
+
+.button-link {
+    display: inline-block;
+    background: var(--accent);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 10px;
+}
+
+.button-link:hover {
+    background: var(--accent-dark);
+}
+
+.current-photo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.thumb {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--accent-soft);
+}

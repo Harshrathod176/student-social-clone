@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+    <a class="brand" href="/">Student<span>Profiles</span></a>
+    {{NAV}}
+</nav>
+
+<div class="wrap narrow">
+
+    <h1>Welcome back</h1>
+    <p class="section-note">Log in to manage your profile.</p>
+
+    <div class="panel">
+        <p class="message">{{MESSAGE}}</p>
+
+        <form action="/login" method="post">
+            <label>Username</label>
+            <input type="text" name="username" required>
+
+            <label>Password</label>
+            <input type="password" name="password" required>
+
+            <button type="submit">Log in</button>
+        </form>
+    </div>
+
+    <p class="form-footer">New here? <a href="/signup">Create a profile</a></p>
+
+</div>
+
+</body>
+</html>

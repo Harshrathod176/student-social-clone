@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+    <a class="brand" href="/">Student<span>Profiles</span></a>
+    {{NAV}}
+</nav>
+
+<div class="wrap narrow">
+
+    <h1>Create your profile</h1>
+    <p class="section-note">Fill this in once and classmates can find you.</p>
+
+    <div class="panel">
+        <p class="message">{{MESSAGE}}</p>
+
+        <form action="/signup" method="post" enctype="multipart/form-data">
+
+            <div class="two-columns">
+                <div>
+                    <label>Username</label>
+                    <input type="text" name="username" placeholder="harsh_p" required>
+                </div>
+                <div>
+                    <label>Password</label>
+                    <input type="password" name="password" required>
+                </div>
+            </div>
+
+            <label>Profile picture (JPG or PNG)</label>
+            <input type="file" name="photo" accept=".jpg,.jpeg,.png" required>
+
+            <label>Bio</label>
+            <textarea name="bio" rows="3"
+                      placeholder="A line or two about yourself."></textarea>
+
+            <div class="two-columns">
+                <div>
+                    <label>Year</label>
+                    <input type="text" name="year" placeholder="Second Year">
+                </div>
+                <div>
+                    <label>Marks</label>
+                    <input type="text" name="marks" placeholder="78%">
+                </div>
+            </div>
+
+            <label>Program</label>
+            <input type="text" name="program" placeholder="B.Sc Computer Science">
+
+            <hr class="divider">
+
+            <h3>Certificate (optional)</h3>
+
+            <label>Certificate name</label>
+            <input type="text" name="cert_title" placeholder="Python Basics">
+
+            <label>Certificate PDF</label>
+            <input type="file" name="cert_file" accept=".pdf">
+
+            <button type="submit">Create profile</button>
+
+        </form>
+    </div>
+
+    <p class="form-footer">Already signed up? <a href="/login">Log in</a></p>
+
+</div>
+
+</body>
+</html>

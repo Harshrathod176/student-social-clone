@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{USERNAME}}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+    <a class="brand" href="/">Student<span>Profiles</span></a>
+    {{NAV}}
+</nav>
+
+<div class="wrap narrow">
+
+    <div class="panel">
+        <div class="profile-head">
+            <img class="profile-photo" src="{{PHOTO}}" alt="profile picture">
+            <div>
+                <h1>{{USERNAME}}</h1>
+                <div class="chip-row">{{CHIPS}}</div>
+            </div>
+        </div>
+
+        <p class="bio">{{BIO}}</p>
+    </div>
+
+    <div class="panel">
+        <h3>Certificates</h3>
+        {{CERTIFICATES}}
+    </div>
+
+    {{OWNER_SECTION}}
+
+</div>
+
+</body>
+</html>

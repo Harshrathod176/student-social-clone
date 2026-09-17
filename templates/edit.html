@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Profile</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav>
+    <a class="brand" href="/">Student<span>Profiles</span></a>
+    {{NAV}}
+</nav>
+
+<div class="wrap narrow">
+
+    <h1>Edit profile</h1>
+    <p class="section-note">Signed in as {{USERNAME}}.</p>
+
+    <div class="panel">
+        <p class="message">{{MESSAGE}}</p>
+
+        <form action="/edit" method="post" enctype="multipart/form-data">
+
+            <label>Profile picture</label>
+            <div class="current-photo">
+                <img class="thumb" src="{{PHOTO}}" alt="current picture">
+                <span class="muted">Leave empty to keep this picture.</span>
+            </div>
+            <input type="file" name="photo" accept=".jpg,.jpeg,.png">
+
+            <label>Bio</label>
+            <textarea name="bio" rows="3">{{BIO}}</textarea>
+
+            <div class="two-columns">
+                <div>
+                    <label>Year</label>
+                    <input type="text" name="year" value="{{YEAR}}">
+                </div>
+                <div>
+                    <label>Marks</label>
+                    <input type="text" name="marks" value="{{MARKS}}">
+                </div>
+            </div>
+
+            <label>Program</label>
+            <input type="text" name="program" value="{{PROGRAM}}">
+
+            <button type="submit">Save changes</button>
+
+        </form>
+    </div>
+
+    <p class="form-footer"><a href="/profile">Back to my profile</a></p>
+
+</div>
+
+</body>
+</html>
