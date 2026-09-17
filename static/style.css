@@ -548,3 +548,89 @@ button:hover {
     object-fit: cover;
     background: var(--accent-soft);
 }
+
+/* ---------- private profiles and following ---------- */
+
+.private-badge {
+    display: inline-block;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 999px;
+    padding: 3px 11px;
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.panel.locked {
+    text-align: center;
+    border-style: dashed;
+    box-shadow: none;
+}
+
+.quiet-button {
+    background: var(--page);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.quiet-button:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+}
+
+.request {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+
+.request:first-of-type {
+    border-top: 0;
+}
+
+.request-who {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.request-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.request-buttons form {
+    display: block;
+    margin: 0;
+}
+
+.request-buttons button {
+    margin: 0;
+    padding: 6px 14px;
+    font-size: 13px;
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 400;
+}
+
+.checkbox input {
+    width: auto;
+    margin: 0;
+}
+
+.small-note {
+    font-size: 13px;
+    margin-top: 8px;
+}

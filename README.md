@@ -7,7 +7,7 @@ open their profiles.
 ## What it uses
 
 - C++ with the Crow library for the web server
-- SQLite for the database (two tables: `students` and `certificates`)
+- SQLite for the database (three tables: `students`, `certificates`, `follows`)
 - Plain HTML forms and one CSS file (the only JavaScript is the one-line
   "are you sure?" box on the delete button)
 
@@ -42,14 +42,44 @@ Then open http://localhost:8090
 | `/profile` | Your own profile, with the edit and upload buttons |
 | `/edit` | Form to change your picture, bio, year, program and marks |
 | `/certificate/delete` | Deletes one of your own certificates |
+| `/follow` `/unfollow` | Send, cancel or undo a follow |
+| `/follow/accept` `/follow/reject` | Answer a request on your own profile |
 | `/search` | Search students by username or program |
 | `/student/<id>` | Another student's profile |
 
-## The two tables
+## The three tables
 
 `students` holds one row per person. `certificates` holds one row per PDF, and
 its `student_id` column says which student it belongs to. That is a one-to-many
 relationship: one student can have many certificates.
+
+`follows` holds one row per follow, with `follower_id` (who asked),
+`following_id` (who they want to follow) and `status`. That is a many-to-many
+relationship: a student can follow many students and be followed by many. The
+`UNIQUE (follower_id, following_id)` rule stops the same request being stored
+twice.
+
+## Private profiles
+
+Each student has an `is_private` column. When it is on, anybody who is not an
+accepted follower sees only the picture and the username.
+
+`status` is `pending` while a request is waiting and `accepted` once the owner
+says yes. Following a public profile skips straight to `accepted`; following a
+private one starts as `pending`.
+
+One function, `can_see_details`, decides everything. A visitor sees the full
+profile only if the profile is public, or they are the owner, or their follow
+is accepted. The same rule is applied to the cards on the home and search
+pages, so a private student shows up there as a picture and a name only.
+
+Two smaller rules back this up, because a search box can leak things a profile
+page does not:
+
+- Searching by program only matches public profiles, otherwise typing a program
+  name would tell you who studies it.
+- The "same program" suggestions on the home page skip private profiles for the
+  same reason.
 
 ## How it works
 
@@ -77,7 +107,11 @@ relationship: one student can have many certificates.
    server keeps your old picture; if you choose a new one it saves the new file
    and deletes the old one. `/edit` checks your cookie before saving anything,
    so nobody can edit a profile that is not theirs.
-9. Deleting a certificate removes the database row and the PDF file. The
+9. Accepting a request runs `UPDATE ... WHERE follower_id = ? AND
+   following_id = ?`, where `following_id` is always taken from your own
+   cookie and never from the form. That means you can only ever accept a
+   request that was sent to you.
+10. Deleting a certificate removes the database row and the PDF file. The
    delete query has `WHERE id = ? AND student_id = ?` in it, so even if someone
    sent the id of a certificate that is not theirs, no row would match and
    nothing would be deleted.

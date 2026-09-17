@@ -20,17 +20,16 @@
             <img class="profile-photo" src="{{PHOTO}}" alt="profile picture">
             <div>
                 <h1>{{USERNAME}}</h1>
-                <div class="chip-row">{{CHIPS}}</div>
+                {{PRIVATE_BADGE}}
+                <div class="chip-row">{{COUNTS}}{{CHIPS}}</div>
             </div>
         </div>
 
-        <p class="bio">{{BIO}}</p>
+        {{BIO}}
+        {{FOLLOW_BUTTON}}
     </div>
 
-    <div class="panel">
-        <h3>Certificates</h3>
-        {{CERTIFICATES}}
-    </div>
+    {{DETAILS}}
 
     {{OWNER_SECTION}}
 

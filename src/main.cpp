@@ -204,6 +204,7 @@ struct Student
     std::string year;
     std::string program;
     std::string marks;
+    int is_private = 0;
 };
 
 std::string column_text(sqlite3_stmt* stmt, int index)
@@ -254,8 +255,8 @@ bool add_student(const Student& student, const std::string& password)
 void update_student(const Student& student)
 {
     const char* sql =
-        "UPDATE students SET bio = ?, year = ?, program = ?, marks = ?, photo = ? "
-        "WHERE id = ?;";
+        "UPDATE students SET bio = ?, year = ?, program = ?, marks = ?, photo = ?, "
+        "is_private = ? WHERE id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -265,7 +266,8 @@ void update_student(const Student& student)
     sqlite3_bind_text(stmt, 3, student.program.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 4, student.marks.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 5, student.photo.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 6, student.id);
+    sqlite3_bind_int(stmt, 6, student.is_private);
+    sqlite3_bind_int(stmt, 7, student.id);
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -274,7 +276,7 @@ void update_student(const Student& student)
 bool get_student(int id, Student& student)
 {
     const char* sql =
-        "SELECT id, username, bio, photo, year, program, marks "
+        "SELECT id, username, bio, photo, year, program, marks, is_private "
         "FROM students WHERE id = ?;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -291,7 +293,8 @@ bool get_student(int id, Student& student)
         student.photo    = column_text(stmt, 3);
         student.year     = column_text(stmt, 4);
         student.program  = column_text(stmt, 5);
-        student.marks    = column_text(stmt, 6);
+        student.marks      = column_text(stmt, 6);
+        student.is_private = sqlite3_column_int(stmt, 7);
         found = true;
     }
 
@@ -398,6 +401,128 @@ void delete_certificate(int certificate_id, int student_id)
     sqlite3_finalize(stmt);
 }
 
+// ---------- following ----------
+
+// Returns "accepted", "pending", or "" when there is no follow at all.
+std::string follow_status(int follower_id, int following_id)
+{
+    const char* sql =
+        "SELECT status FROM follows WHERE follower_id = ? AND following_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, follower_id);
+    sqlite3_bind_int(stmt, 2, following_id);
+
+    std::string status;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        status = column_text(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return status;
+}
+
+// A public profile is followed straight away. A private one has to be
+// accepted by its owner first, so the follow starts as "pending".
+void start_follow(int follower_id, int following_id, bool target_is_private)
+{
+    const char* sql =
+        "INSERT OR IGNORE INTO follows(follower_id, following_id, status) "
+        "VALUES(?, ?, ?);";
+
+    std::string status = target_is_private ? "pending" : "accepted";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, follower_id);
+    sqlite3_bind_int(stmt, 2, following_id);
+    sqlite3_bind_text(stmt, 3, status.c_str(), -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// Used for unfollowing, for cancelling your own request, and for rejecting
+// somebody else's request.
+void remove_follow(int follower_id, int following_id)
+{
+    const char* sql =
+        "DELETE FROM follows WHERE follower_id = ? AND following_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, follower_id);
+    sqlite3_bind_int(stmt, 2, following_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void accept_follow(int follower_id, int following_id)
+{
+    const char* sql =
+        "UPDATE follows SET status = 'accepted' "
+        "WHERE follower_id = ? AND following_id = ? AND status = 'pending';";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, follower_id);
+    sqlite3_bind_int(stmt, 2, following_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+int count_follows(int student_id, const char* sql)
+{
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    int total = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        total = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return total;
+}
+
+int count_followers(int student_id)
+{
+    return count_follows(student_id,
+        "SELECT COUNT(*) FROM follows "
+        "WHERE following_id = ? AND status = 'accepted';");
+}
+
+int count_following(int student_id)
+{
+    return count_follows(student_id,
+        "SELECT COUNT(*) FROM follows "
+        "WHERE follower_id = ? AND status = 'accepted';");
+}
+
+// This is the rule that decides what a visitor is allowed to see.
+bool can_see_details(const Student& student, int viewer_id)
+{
+    if (!student.is_private)
+    {
+        return true;
+    }
+
+    if (viewer_id == student.id)
+    {
+        return true;
+    }
+
+    return follow_status(viewer_id, student.id) == "accepted";
+}
+
 // ---------- building pieces of HTML ----------
 
 std::string nav_html(int user_id)
@@ -422,27 +547,42 @@ std::string nav_html(int user_id)
 }
 
 // Turns the rows of a query into a grid of student cards.
-// The query must select: id, username, photo, year, program.
-std::string render_cards(sqlite3_stmt* stmt)
+// The query must select: id, username, photo, year, program, is_private.
+// A private student only shows a picture and a name, the same as their profile.
+std::string render_cards(sqlite3_stmt* stmt, int viewer_id)
 {
     std::string cards;
 
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        std::string id       = std::to_string(sqlite3_column_int(stmt, 0));
+        int student_id       = sqlite3_column_int(stmt, 0);
+        std::string id       = std::to_string(student_id);
         std::string username = escape_html(column_text(stmt, 1));
         std::string photo    = escape_html(column_text(stmt, 2));
         std::string year     = escape_html(column_text(stmt, 3));
         std::string program  = escape_html(column_text(stmt, 4));
+        int is_private       = sqlite3_column_int(stmt, 5);
+
+        bool show_details = !is_private
+                         || viewer_id == student_id
+                         || follow_status(viewer_id, student_id) == "accepted";
 
         cards += "<a class=\"card\" href=\"/student/" + id + "\">";
         cards += "<img class=\"card-photo\" src=\"" + photo + "\" alt=\"\">";
         cards += "<h3>" + username + "</h3>";
-        cards += "<p class=\"muted\">" + program + "</p>";
 
-        if (!year.empty())
+        if (show_details)
         {
-            cards += "<span class=\"chip\">" + year + "</span>";
+            cards += "<p class=\"muted\">" + program + "</p>";
+
+            if (!year.empty())
+            {
+                cards += "<span class=\"chip\">" + year + "</span>";
+            }
+        }
+        else
+        {
+            cards += "<p class=\"muted\">Private profile</p>";
         }
 
         cards += "</a>";
@@ -451,16 +591,16 @@ std::string render_cards(sqlite3_stmt* stmt)
     return cards;
 }
 
-std::string newest_students_html()
+std::string newest_students_html(int viewer_id)
 {
     const char* sql =
-        "SELECT id, username, photo, year, program FROM students "
+        "SELECT id, username, photo, year, program, is_private FROM students "
         "ORDER BY id DESC LIMIT 8;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
 
-    std::string cards = render_cards(stmt);
+    std::string cards = render_cards(stmt, viewer_id);
 
     sqlite3_finalize(stmt);
 
@@ -483,15 +623,15 @@ std::string recommended_html(int user_id)
     }
 
     const char* sql =
-        "SELECT id, username, photo, year, program FROM students "
-        "WHERE program = ? AND id != ? LIMIT 8;";
+        "SELECT id, username, photo, year, program, is_private FROM students "
+        "WHERE program = ? AND id != ? AND is_private = 0 LIMIT 8;";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, me.program.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, user_id);
 
-    std::string cards = render_cards(stmt);
+    std::string cards = render_cards(stmt, user_id);
 
     sqlite3_finalize(stmt);
 
@@ -509,6 +649,98 @@ std::string recommended_html(int user_id)
 }
 
 // Builds the little rounded labels, skipping any field the student left blank.
+// The Follow / Requested / Unfollow button shown on other people's profiles.
+std::string follow_button_html(const Student& student, int viewer_id)
+{
+    if (viewer_id == student.id)
+    {
+        return "";
+    }
+
+    if (viewer_id == 0)
+    {
+        return "<p class=\"muted\"><a href=\"/login\">Log in</a> to follow "
+             + escape_html(student.username) + ".</p>";
+    }
+
+    std::string status = follow_status(viewer_id, student.id);
+    std::string id = std::to_string(student.id);
+    std::string form;
+
+    if (status.empty())
+    {
+        form += "<form action=\"/follow\" method=\"post\">";
+        form += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        form += "<button type=\"submit\">Follow</button>";
+        form += "</form>";
+    }
+    else if (status == "pending")
+    {
+        form += "<form action=\"/unfollow\" method=\"post\">";
+        form += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        form += "<button class=\"quiet-button\" type=\"submit\">"
+                "Requested - cancel</button>";
+        form += "</form>";
+    }
+    else
+    {
+        form += "<form action=\"/unfollow\" method=\"post\">";
+        form += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        form += "<button class=\"quiet-button\" type=\"submit\">Unfollow</button>";
+        form += "</form>";
+    }
+
+    return form;
+}
+
+// The list of people waiting for you to accept them, shown on your own profile.
+std::string follow_requests_html(int student_id)
+{
+    const char* sql =
+        "SELECT s.id, s.username, s.photo FROM follows f "
+        "JOIN students s ON s.id = f.follower_id "
+        "WHERE f.following_id = ? AND f.status = 'pending' ORDER BY f.id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    std::string list;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        std::string id       = std::to_string(sqlite3_column_int(stmt, 0));
+        std::string username = escape_html(column_text(stmt, 1));
+        std::string photo    = escape_html(column_text(stmt, 2));
+
+        list += "<div class=\"request\">";
+        list += "<a class=\"request-who\" href=\"/student/" + id + "\">";
+        list += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
+        list += "<span>" + username + "</span>";
+        list += "</a>";
+        list += "<div class=\"request-buttons\">";
+        list += "<form action=\"/follow/accept\" method=\"post\">";
+        list += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        list += "<button type=\"submit\">Accept</button>";
+        list += "</form>";
+        list += "<form action=\"/follow/reject\" method=\"post\">";
+        list += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        list += "<button class=\"delete-button\" type=\"submit\">Reject</button>";
+        list += "</form>";
+        list += "</div>";
+        list += "</div>";
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">No follow requests right now.</p>";
+    }
+
+    return list;
+}
+
 std::string chip_row_html(const Student& student)
 {
     std::string chips;
@@ -581,7 +813,9 @@ std::string certificates_html(int student_id, bool is_owner)
 }
 
 // The upload form only appears when you are looking at your own profile.
-std::string owner_section_html(bool is_owner, const std::string& message)
+std::string owner_section_html(bool is_owner,
+                               const Student& owner,
+                               const std::string& message)
 {
     if (!is_owner)
     {
@@ -591,8 +825,15 @@ std::string owner_section_html(bool is_owner, const std::string& message)
     std::string form;
 
     form += "<div class=\"panel\">";
+    form += "<h3>Follow requests</h3>";
+    form += follow_requests_html(owner.id);
+    form += "</div>";
+
+    form += "<div class=\"panel\">";
     form += "<h3>Your profile</h3>";
-    form += "<p class=\"muted\">Only you can see these buttons.</p>";
+    form += "<p class=\"muted\">Only you can see these buttons. Your profile is ";
+    form += owner.is_private ? "<b>private</b>." : "<b>public</b>.";
+    form += "</p>";
     form += "<a class=\"button-link\" href=\"/edit\">Edit profile</a>";
     form += "</div>";
 
@@ -643,6 +884,8 @@ crow::response edit_page(const Student& student, const std::string& message)
     html = replace_all(html, "{{YEAR}}", escape_html(student.year));
     html = replace_all(html, "{{PROGRAM}}", escape_html(student.program));
     html = replace_all(html, "{{MARKS}}", escape_html(student.marks));
+    html = replace_all(html, "{{PRIVATE_CHECKED}}",
+                       student.is_private ? "checked" : "");
 
     return html_page(html);
 }
@@ -652,17 +895,66 @@ crow::response profile_page(const Student& student,
                             const std::string& message)
 {
     bool is_owner = student.id == user_id;
+    bool show_details = can_see_details(student, user_id);
 
     std::string html = read_file("templates/profile.html");
 
     html = replace_all(html, "{{NAV}}", nav_html(user_id));
     html = replace_all(html, "{{USERNAME}}", escape_html(student.username));
     html = replace_all(html, "{{PHOTO}}", escape_html(student.photo));
-    html = replace_all(html, "{{BIO}}", escape_html(student.bio));
-    html = replace_all(html, "{{CHIPS}}", chip_row_html(student));
-    html = replace_all(html, "{{CERTIFICATES}}",
-                       certificates_html(student.id, is_owner));
-    html = replace_all(html, "{{OWNER_SECTION}}", owner_section_html(is_owner, message));
+    html = replace_all(html, "{{FOLLOW_BUTTON}}",
+                       follow_button_html(student, user_id));
+
+    std::string counts;
+    counts += "<span class=\"chip\">" + std::to_string(count_followers(student.id))
+            + " followers</span>";
+    counts += "<span class=\"chip\">" + std::to_string(count_following(student.id))
+            + " following</span>";
+    html = replace_all(html, "{{COUNTS}}", counts);
+
+    if (student.is_private)
+    {
+        html = replace_all(html, "{{PRIVATE_BADGE}}",
+                           "<p class=\"private-badge\">Private profile</p>");
+    }
+    else
+    {
+        html = replace_all(html, "{{PRIVATE_BADGE}}", "");
+    }
+
+    // Everything below here is only filled in when the visitor is allowed
+    // to see the details. Otherwise they get the locked message instead.
+    if (show_details)
+    {
+        std::string bio = student.bio.empty()
+            ? ""
+            : "<p class=\"bio\">" + escape_html(student.bio) + "</p>";
+
+        std::string certificates =
+            "<div class=\"panel\"><h3>Certificates</h3>"
+            + certificates_html(student.id, is_owner) + "</div>";
+
+        html = replace_all(html, "{{CHIPS}}", chip_row_html(student));
+        html = replace_all(html, "{{BIO}}", bio);
+        html = replace_all(html, "{{DETAILS}}", certificates);
+    }
+    else
+    {
+        std::string locked;
+        locked += "<div class=\"panel locked\">";
+        locked += "<h3>This profile is private</h3>";
+        locked += "<p class=\"muted\">Follow " + escape_html(student.username)
+                + " to see their year, program, marks, bio and certificates. "
+                  "They have to accept your request first.</p>";
+        locked += "</div>";
+
+        html = replace_all(html, "{{CHIPS}}", "");
+        html = replace_all(html, "{{BIO}}", "");
+        html = replace_all(html, "{{DETAILS}}", locked);
+    }
+
+    html = replace_all(html, "{{OWNER_SECTION}}",
+                       owner_section_html(is_owner, student, message));
 
     return html_page(html);
 }
@@ -696,7 +988,7 @@ int main()
 
         html = replace_all(html, "{{NAV}}", nav_html(user_id));
         html = replace_all(html, "{{RECOMMENDED}}", recommended_html(user_id));
-        html = replace_all(html, "{{NEWEST}}", newest_students_html());
+        html = replace_all(html, "{{NEWEST}}", newest_students_html(user_id));
 
         return html_page(html);
     });
@@ -856,6 +1148,9 @@ int main()
         student.program = form.get_part_by_name("program").body;
         student.marks   = form.get_part_by_name("marks").body;
 
+        // A checkbox only appears in the form when it is ticked.
+        student.is_private = form.get_part_by_name("is_private").body.empty() ? 0 : 1;
+
         // Choosing a new picture is optional. An empty box keeps the old one.
         crow::multipart::part picture = form.get_part_by_name("photo");
 
@@ -902,6 +1197,85 @@ int main()
         {
             return redirect_to("/profile?note=Please+add+a+name+and+a+PDF+file.");
         }
+
+        return redirect_to("/profile");
+    });
+
+    // Reads the "id" field that every follow form sends.
+    auto posted_id = [](const crow::request& req)
+    {
+        crow::query_string form("?" + req.body);
+        const char* id_text = form.get("id");
+        return id_text ? std::atoi(id_text) : 0;
+    };
+
+    CROW_ROUTE(app, "/follow").methods(crow::HTTPMethod::POST)
+    ([posted_id](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        int target_id = posted_id(req);
+        Student target;
+
+        // You cannot follow yourself or somebody who does not exist.
+        if (target_id == user_id || !get_student(target_id, target))
+        {
+            return redirect_to("/search");
+        }
+
+        start_follow(user_id, target_id, target.is_private != 0);
+
+        return redirect_to("/student/" + std::to_string(target_id));
+    });
+
+    CROW_ROUTE(app, "/unfollow").methods(crow::HTTPMethod::POST)
+    ([posted_id](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        int target_id = posted_id(req);
+        remove_follow(user_id, target_id);
+
+        return redirect_to("/student/" + std::to_string(target_id));
+    });
+
+    CROW_ROUTE(app, "/follow/accept").methods(crow::HTTPMethod::POST)
+    ([posted_id](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        // user_id is the one being followed, so only your own requests change.
+        accept_follow(posted_id(req), user_id);
+
+        return redirect_to("/profile");
+    });
+
+    CROW_ROUTE(app, "/follow/reject").methods(crow::HTTPMethod::POST)
+    ([posted_id](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        remove_follow(posted_id(req), user_id);
 
         return redirect_to("/profile");
     });
@@ -957,8 +1331,9 @@ int main()
         std::string query = q ? q : "";
 
         const char* sql =
-            "SELECT id, username, photo, year, program FROM students "
-            "WHERE username LIKE ? OR program LIKE ? ORDER BY username;";
+            "SELECT id, username, photo, year, program, is_private FROM students "
+            "WHERE username LIKE ? OR (program LIKE ? AND is_private = 0) "
+            "ORDER BY username;";
 
         sqlite3_stmt* stmt = nullptr;
         sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -967,7 +1342,7 @@ int main()
         sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, pattern.c_str(), -1, SQLITE_TRANSIENT);
 
-        std::string cards = render_cards(stmt);
+        std::string cards = render_cards(stmt, logged_in_id(req));
         sqlite3_finalize(stmt);
 
         std::string results = cards.empty()
