@@ -13,8 +13,10 @@ open their profiles.
 
 ## Build
 
+Needs [vcpkg](https://vcpkg.io) with `crow` and `sqlite3` installed.
+
 ```
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=/Users/anurag/dev/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=<your vcpkg folder>/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 ```
 
