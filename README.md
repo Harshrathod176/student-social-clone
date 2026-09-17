@@ -2,7 +2,34 @@
 
 A college project. Students create a profile with a picture, bio, marks and
 PDF certificates. Everyone can browse the home page, search for students and
-open their profiles.
+open their profiles. A profile can be made private, and then only accepted
+followers can see the details.
+
+Written in C++ with the Crow web library and SQLite.
+
+## Screenshots
+
+**Home page.** New profiles are listed as cards. `karan_j` has a private
+profile, so his card shows only a picture and a name.
+
+![Home page](docs/home.png)
+
+**A profile.** Year, program, marks, bio and the certificate PDFs, plus a
+button to follow or unfollow.
+
+![A student profile](docs/profile.png)
+
+**A private profile seen by somebody else.** The details are replaced by a
+message and a Follow button.
+
+![A private profile](docs/private.png)
+
+**Your own profile.** Follow requests waiting to be accepted, and the buttons
+only you can see.
+
+![Follow requests](docs/requests.png)
+
+*(The students in these pictures are made up for the screenshots.)*
 
 ## What it uses
 
