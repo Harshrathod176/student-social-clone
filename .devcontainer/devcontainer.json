@@ -2,7 +2,10 @@
   "name": "Student Profiles (C++ / Crow)",
   "image": "mcr.microsoft.com/devcontainers/cpp:ubuntu-24.04",
 
-  "onCreateCommand": "bash .devcontainer/setup.sh",
+  // Kept from failing the whole creation: a container that comes up with
+  // an unfinished build can still be worked in, while a failure here
+  // would replace it with the bare recovery image.
+  "onCreateCommand": "bash .devcontainer/setup.sh || echo 'SETUP FAILED - read the errors above, then run ./.devcontainer/setup.sh by hand'",
 
   "forwardPorts": [8090],
   "portsAttributes": {
