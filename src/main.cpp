@@ -5,8 +5,10 @@
 
 #include <ctime>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <vector>
 
 sqlite3* db = nullptr;
 
@@ -292,9 +294,31 @@ std::string column_text(sqlite3_stmt* stmt, int index)
 
 // ---------- sessions ----------
 
+// A login older than this stops working and the student signs in again.
+const int SESSION_DAYS = 30;
+
+// Old rows are no use to anybody, so clear them out whenever somebody logs in.
+void remove_stale_sessions()
+{
+    const char* sql =
+        "DELETE FROM sessions "
+        "WHERE created_at <= datetime('now', '-' || ? || ' days');";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, SESSION_DAYS);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 void create_session(const std::string& token, int student_id)
 {
-    const char* sql = "INSERT INTO sessions(token, student_id) VALUES(?, ?);";
+    remove_stale_sessions();
+
+    const char* sql =
+        "INSERT INTO sessions(token, student_id, created_at) "
+        "VALUES(?, ?, datetime('now'));";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -328,11 +352,14 @@ int logged_in_id(const crow::request& req)
         return 0;
     }
 
-    const char* sql = "SELECT student_id FROM sessions WHERE token = ?;";
+    const char* sql =
+        "SELECT student_id FROM sessions "
+        "WHERE token = ? AND created_at > datetime('now', '-' || ? || ' days');";
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, token.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, SESSION_DAYS);
 
     int id = 0;
 
@@ -1168,7 +1195,9 @@ bool add_comment(int post_id, int student_id, const std::string& body)
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
-    return true;
+    // The insert does nothing when the post is gone, and that is not a
+    // comment having been written.
+    return sqlite3_changes(db) > 0;
 }
 
 // A comment goes when you wrote it yourself, or when the post it sits under
@@ -1207,6 +1236,120 @@ void delete_post_replies(int post_id)
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
+}
+
+// ---------- notifications ----------
+
+int post_owner(int post_id)
+{
+    const char* sql = "SELECT student_id FROM posts WHERE id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+
+    int id = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        id = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return id;
+}
+
+// Nobody needs telling about their own like or their own comment.
+void add_notification(int post_id, int actor_id, const char* kind)
+{
+    int owner = post_owner(post_id);
+
+    if (owner == 0 || owner == actor_id)
+    {
+        return;
+    }
+
+    const char* sql =
+        "INSERT INTO notifications(student_id, actor_id, post_id, kind) "
+        "VALUES(?, ?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, owner);
+    sqlite3_bind_int(stmt, 2, actor_id);
+    sqlite3_bind_int(stmt, 3, post_id);
+    sqlite3_bind_text(stmt, 4, kind, -1, SQLITE_TRANSIENT);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// Taking a like back takes the "liked your post" line with it, so pressing
+// the heart on and off does not pile up notices.
+void remove_like_notification(int post_id, int actor_id)
+{
+    const char* sql =
+        "DELETE FROM notifications "
+        "WHERE post_id = ? AND actor_id = ? AND kind = 'like';";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+    sqlite3_bind_int(stmt, 2, actor_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+int count_unseen(int student_id)
+{
+    if (student_id == 0)
+    {
+        return 0;
+    }
+
+    const char* sql =
+        "SELECT COUNT(*) FROM notifications "
+        "WHERE student_id = ? AND seen = 0;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    int total = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        total = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return total;
+}
+
+void mark_notifications_seen(int student_id)
+{
+    const char* sql =
+        "UPDATE notifications SET seen = 1 WHERE student_id = ? AND seen = 0;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+void delete_post_notifications(int post_id)
+{
+    const char* sql = "DELETE FROM notifications WHERE post_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
 }
 
 // ---------- following ----------
@@ -1476,6 +1619,75 @@ std::string inbox_html(int me)
 
 // ---------- building pieces of HTML ----------
 
+// The list on the alerts page. Newest first, and a line links straight to
+// the post it is about.
+std::string notifications_html(int student_id)
+{
+    const char* sql =
+        "SELECT n.kind, n.created_at, n.seen, n.post_id, "
+        "       s.id, s.username, s.photo, p.body "
+        "FROM notifications n "
+        "JOIN students s ON s.id = n.actor_id "
+        "JOIN posts p ON p.id = n.post_id "
+        "WHERE n.student_id = ? ORDER BY n.id DESC LIMIT 50;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, student_id);
+
+    std::string list;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        std::string kind   = column_text(stmt, 0);
+        std::string when   = escape_html(column_text(stmt, 1));
+        bool seen          = sqlite3_column_int(stmt, 2) != 0;
+        int actor_id       = sqlite3_column_int(stmt, 4);
+        std::string actor  = escape_html(column_text(stmt, 5));
+        std::string photo  = escape_html(column_text(stmt, 6));
+        std::string body   = escape_html(column_text(stmt, 7));
+
+        if (when.size() > 16)
+        {
+            when = when.substr(0, 16);
+        }
+
+        // Just enough of the post to know which one is meant.
+        if (body.size() > 60)
+        {
+            body = body.substr(0, 60) + "...";
+        }
+
+        list += "<div class=\"alert-row";
+        list += seen ? "" : " unseen";
+        list += "\">";
+
+        list += "<a href=\"/student/" + std::to_string(actor_id) + "\">";
+        list += "<img class=\"thumb small-thumb\" src=\"" + photo + "\" alt=\"\">";
+        list += "</a>";
+
+        list += "<div class=\"alert-text\">";
+        list += "<a class=\"comment-name\" href=\"/student/"
+              + std::to_string(actor_id) + "\"><b>" + actor + "</b></a> ";
+        list += kind == "like" ? "liked your post" : "commented on your post";
+        list += "<p class=\"alert-post\">" + body + "</p>";
+        list += "<span class=\"small\">" + when + "</span>";
+        list += "</div>";
+
+        list += "</div>";
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (list.empty())
+    {
+        return "<p class=\"empty\">Nothing yet. Likes and comments on your "
+               "posts show up here.</p>";
+    }
+
+    return list;
+}
+
 std::string nav_html(int user_id)
 {
     std::string links;
@@ -1491,6 +1703,19 @@ std::string nav_html(int user_id)
     else
     {
         links += "<a href=\"/messages\">Messages</a>";
+
+        // The count only appears when there is something waiting.
+        int waiting = count_unseen(user_id);
+
+        links += "<a href=\"/notifications\">Alerts";
+
+        if (waiting > 0)
+        {
+            links += "<span class=\"badge\">" + std::to_string(waiting) + "</span>";
+        }
+
+        links += "</a>";
+
         links += "<a href=\"/profile\">My Profile</a>";
         links += "<a class=\"nav-button\" href=\"/logout\">Logout</a>";
     }
@@ -1778,14 +2003,16 @@ std::string safe_back(const std::string& back)
     return back;
 }
 
-// The heart, the count, and how many comments there are.
-std::string post_actions_html(int post_id, int viewer_id, const std::string& back)
+// The heart, the count, and how many comments there are. The numbers are
+// read once by the feed query and handed in, rather than looked up here.
+std::string post_actions_html(int post_id,
+                              int likes,
+                              bool liked,
+                              int comments,
+                              int viewer_id,
+                              const std::string& back)
 {
-    std::string id    = std::to_string(post_id);
-    int likes         = count_likes(post_id);
-    int comments      = count_comments(post_id);
-    bool liked        = viewer_likes(post_id, viewer_id);
-
+    std::string id = std::to_string(post_id);
     std::string out;
 
     out += "<div class=\"post-actions\">";
@@ -1793,8 +2020,7 @@ std::string post_actions_html(int post_id, int viewer_id, const std::string& bac
     if (viewer_id == 0)
     {
         // A visitor who is not logged in sees the count but cannot press it.
-        out += "<span class=\"like-count\">";
-        out += liked ? "&#9829; " : "&#9825; ";
+        out += "<span class=\"like-count\">&#9825; ";
         out += std::to_string(likes);
         out += "</span>";
     }
@@ -1823,116 +2049,191 @@ std::string post_actions_html(int post_id, int viewer_id, const std::string& bac
     return out;
 }
 
-// Everything under the line: the comments themselves, then the box for
-// writing one.
-std::string comments_html(int post_id,
-                          int post_author_id,
-                          int viewer_id,
-                          const std::string& back)
+// The box for writing a comment, which only a logged in student gets.
+std::string comment_box_html(int post_id, int viewer_id, const std::string& back)
 {
-    const char* sql =
-        "SELECT c.id, c.body, c.created_at, s.id, s.username, s.photo "
-        "FROM comments c JOIN students s ON s.id = c.student_id "
-        "WHERE c.post_id = ? ORDER BY c.id;";
-
-    sqlite3_stmt* stmt = nullptr;
-    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, post_id);
+    if (viewer_id == 0)
+    {
+        return "";
+    }
 
     std::string out;
 
+    out += "<form class=\"comment-form\" action=\"/comment\" method=\"post\">";
+    out += "<input type=\"hidden\" name=\"post_id\" value=\""
+         + std::to_string(post_id) + "\">";
+    out += "<input type=\"hidden\" name=\"back\" value=\""
+         + escape_html(back) + "\">";
+    out += "<input type=\"text\" name=\"body\" maxlength=\"500\" "
+           "placeholder=\"Write a comment\">";
+    out += "<button type=\"submit\">Send</button>";
+    out += "</form>";
+
+    return out;
+}
+
+// Every comment for a whole page of posts, read in one query instead of one
+// query per post, and handed back as ready HTML for each post in turn.
+std::map<int, std::string> comments_for_posts(const std::vector<int>& post_ids,
+                                              const std::map<int, int>& authors,
+                                              int viewer_id,
+                                              const std::string& back)
+{
+    std::map<int, std::string> out;
+
+    if (post_ids.empty())
+    {
+        return out;
+    }
+
+    // One "?" for each post, so the whole page is a single IN (...) lookup.
+    std::string sql =
+        "SELECT c.post_id, c.id, c.body, c.created_at, s.id, s.username, s.photo "
+        "FROM comments c JOIN students s ON s.id = c.student_id "
+        "WHERE c.post_id IN (";
+
+    for (size_t i = 0; i < post_ids.size(); ++i)
+    {
+        sql += i == 0 ? "?" : ",?";
+    }
+
+    sql += ") ORDER BY c.id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+
+    for (size_t i = 0; i < post_ids.size(); ++i)
+    {
+        sqlite3_bind_int(stmt, static_cast<int>(i) + 1, post_ids[i]);
+    }
+
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        std::string comment_id = std::to_string(sqlite3_column_int(stmt, 0));
-        std::string body       = escape_html(column_text(stmt, 1));
-        std::string when       = escape_html(column_text(stmt, 2));
-        int author_id          = sqlite3_column_int(stmt, 3);
-        std::string author     = escape_html(column_text(stmt, 4));
-        std::string photo      = escape_html(column_text(stmt, 5));
+        int post_id            = sqlite3_column_int(stmt, 0);
+        std::string comment_id = std::to_string(sqlite3_column_int(stmt, 1));
+        std::string body       = escape_html(column_text(stmt, 2));
+        std::string when       = escape_html(column_text(stmt, 3));
+        int author_id          = sqlite3_column_int(stmt, 4);
+        std::string author     = escape_html(column_text(stmt, 5));
+        std::string photo      = escape_html(column_text(stmt, 6));
 
         if (when.size() > 16)
         {
             when = when.substr(0, 16);
         }
 
-        out += "<div class=\"comment\">";
+        auto owner = authors.find(post_id);
+        int post_author_id = owner == authors.end() ? 0 : owner->second;
 
-        out += "<a class=\"comment-who\" href=\"/student/"
-             + std::to_string(author_id) + "\">";
-        out += "<img class=\"thumb small-thumb\" src=\"" + photo + "\" alt=\"\">";
-        out += "</a>";
+        std::string& block = out[post_id];
 
-        out += "<div class=\"comment-text\">";
-        out += "<a class=\"comment-name\" href=\"/student/"
-             + std::to_string(author_id) + "\"><b>" + author + "</b></a> ";
-        out += "<span class=\"small\">" + when + "</span>";
-        out += "<p class=\"comment-body\">" + linkify(body) + "</p>";
-        out += "</div>";
+        block += "<div class=\"comment\">";
+
+        block += "<a class=\"comment-who\" href=\"/student/"
+               + std::to_string(author_id) + "\">";
+        block += "<img class=\"thumb small-thumb\" src=\"" + photo + "\" alt=\"\">";
+        block += "</a>";
+
+        block += "<div class=\"comment-text\">";
+        block += "<a class=\"comment-name\" href=\"/student/"
+               + std::to_string(author_id) + "\"><b>" + author + "</b></a> ";
+        block += "<span class=\"small\">" + when + "</span>";
+        block += "<p class=\"comment-body\">" + linkify(body) + "</p>";
+        block += "</div>";
 
         // Your own comment is yours to remove, and so is any comment sitting
         // under a post of yours.
         if (viewer_id != 0
             && (author_id == viewer_id || post_author_id == viewer_id))
         {
-            out += "<form action=\"/comment/delete\" method=\"post\">";
-            out += "<input type=\"hidden\" name=\"id\" value=\"" + comment_id + "\">";
-            out += "<input type=\"hidden\" name=\"back\" value=\""
-                 + escape_html(back) + "\">";
-            out += "<button class=\"delete-button\" type=\"submit\" "
-                   "onclick=\"return confirm('Delete this comment?')\">"
-                   "Delete</button>";
-            out += "</form>";
+            block += "<form action=\"/comment/delete\" method=\"post\">";
+            block += "<input type=\"hidden\" name=\"id\" value=\"" + comment_id + "\">";
+            block += "<input type=\"hidden\" name=\"back\" value=\""
+                   + escape_html(back) + "\">";
+            block += "<button class=\"delete-button\" type=\"submit\" "
+                     "onclick=\"return confirm('Delete this comment?')\">"
+                     "Delete</button>";
+            block += "</form>";
         }
 
-        out += "</div>";
+        block += "</div>";
     }
 
     sqlite3_finalize(stmt);
-
-    if (viewer_id != 0)
-    {
-        out += "<form class=\"comment-form\" action=\"/comment\" method=\"post\">";
-        out += "<input type=\"hidden\" name=\"post_id\" value=\""
-             + std::to_string(post_id) + "\">";
-        out += "<input type=\"hidden\" name=\"back\" value=\""
-             + escape_html(back) + "\">";
-        out += "<input type=\"text\" name=\"body\" maxlength=\"500\" "
-               "placeholder=\"Write a comment\">";
-        out += "<button type=\"submit\">Send</button>";
-        out += "</form>";
-    }
-
-    if (out.empty())
-    {
-        return "";
-    }
-
-    return "<div class=\"comments\">" + out + "</div>";
+    return out;
 }
 
+// One post as it was read from the feed query.
+struct FeedPost
+{
+    int id = 0;
+    int author_id = 0;
+    std::string raw_body;
+    std::string body;
+    std::string file;
+    std::string when;
+    std::string author;
+    std::string photo;
+    int likes = 0;
+    bool liked = false;
+    int comments = 0;
+};
+
+// max_posts of 0 means draw everything the query returned. A profile asks
+// for one more row than it shows, so it can tell whether older posts exist,
+// and then caps the drawing here.
 std::string render_posts(sqlite3_stmt* stmt,
                          int viewer_id,
                          bool show_who,
-                         const std::string& back)
+                         const std::string& back,
+                         int max_posts = 0)
 {
-    std::string list;
+    // The rows are read first and drawn afterwards, so the comments for the
+    // whole page can be fetched in one go rather than one post at a time.
+    std::vector<FeedPost> posts;
+    std::vector<int> ids;
+    std::map<int, int> authors;
 
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        int post_number      = sqlite3_column_int(stmt, 0);
-        std::string post_id  = std::to_string(post_number);
-        std::string body     = escape_html(column_text(stmt, 1));
-        std::string file     = escape_html(column_text(stmt, 2));
-        std::string when     = escape_html(column_text(stmt, 3));
-        int author_id        = sqlite3_column_int(stmt, 4);
-        std::string author   = escape_html(column_text(stmt, 5));
-        std::string photo    = escape_html(column_text(stmt, 6));
+        FeedPost post;
+
+        post.id        = sqlite3_column_int(stmt, 0);
+        post.raw_body  = column_text(stmt, 1);
+        post.body      = escape_html(post.raw_body);
+        post.file      = escape_html(column_text(stmt, 2));
+        post.when      = escape_html(column_text(stmt, 3));
+        post.author_id = sqlite3_column_int(stmt, 4);
+        post.author    = escape_html(column_text(stmt, 5));
+        post.photo     = escape_html(column_text(stmt, 6));
+        post.likes     = sqlite3_column_int(stmt, 7);
+        post.liked     = sqlite3_column_int(stmt, 8) != 0;
+        post.comments  = sqlite3_column_int(stmt, 9);
 
         // "2026-09-17 10:57:33" is nicer without the seconds.
-        if (when.size() > 16)
+        if (post.when.size() > 16)
         {
-            when = when.substr(0, 16);
+            post.when = post.when.substr(0, 16);
         }
+
+        ids.push_back(post.id);
+        authors[post.id] = post.author_id;
+        posts.push_back(post);
+
+        if (max_posts > 0 && static_cast<int>(posts.size()) >= max_posts)
+        {
+            break;
+        }
+    }
+
+    std::map<int, std::string> comments =
+        comments_for_posts(ids, authors, viewer_id, back);
+
+    std::string list;
+
+    for (const FeedPost& post : posts)
+    {
+        std::string post_id = std::to_string(post.id);
 
         list += "<div class=\"post\">";
 
@@ -1941,18 +2242,18 @@ std::string render_posts(sqlite3_stmt* stmt,
         if (show_who)
         {
             list += "<a class=\"post-who\" href=\"/student/"
-                  + std::to_string(author_id) + "\">";
-            list += "<img class=\"thumb\" src=\"" + photo + "\" alt=\"\">";
-            list += "<span><b>" + author + "</b><br>";
-            list += "<span class=\"small\">" + when + "</span></span>";
+                  + std::to_string(post.author_id) + "\">";
+            list += "<img class=\"thumb\" src=\"" + post.photo + "\" alt=\"\">";
+            list += "<span><b>" + post.author + "</b><br>";
+            list += "<span class=\"small\">" + post.when + "</span></span>";
             list += "</a>";
         }
         else
         {
-            list += "<span class=\"small\">" + when + "</span>";
+            list += "<span class=\"small\">" + post.when + "</span>";
         }
 
-        if (author_id == viewer_id)
+        if (post.author_id == viewer_id)
         {
             list += "<form action=\"/post/delete\" method=\"post\">";
             list += "<input type=\"hidden\" name=\"id\" value=\"" + post_id + "\">";
@@ -1963,17 +2264,17 @@ std::string render_posts(sqlite3_stmt* stmt,
 
         list += "</div>";
 
-        list += "<p class=\"post-body\">" + linkify(body) + "</p>";
+        list += "<p class=\"post-body\">" + linkify(post.body) + "</p>";
 
-        list += link_card_html(column_text(stmt, 1));
+        list += link_card_html(post.raw_body);
 
-        if (!file.empty())
+        if (!post.file.empty())
         {
-            list += attachment_preview(file);
+            list += attachment_preview(post.file);
 
-            if (is_pdf(file))
+            if (is_pdf(post.file))
             {
-                list += "<a class=\"document-link\" href=\"" + file
+                list += "<a class=\"document-link\" href=\"" + post.file
                       + "\" target=\"_blank\">";
                 list += "<span class=\"pdf-tag\">PDF</span>";
                 list += "<span>Open full size</span>";
@@ -1981,8 +2282,23 @@ std::string render_posts(sqlite3_stmt* stmt,
             }
         }
 
-        list += post_actions_html(post_number, viewer_id, back);
-        list += comments_html(post_number, author_id, viewer_id, back);
+        list += post_actions_html(post.id, post.likes, post.liked,
+                                  post.comments, viewer_id, back);
+
+        std::string rows;
+        auto found = comments.find(post.id);
+
+        if (found != comments.end())
+        {
+            rows = found->second;
+        }
+
+        std::string box = comment_box_html(post.id, viewer_id, back);
+
+        if (!rows.empty() || !box.empty())
+        {
+            list += "<div class=\"comments\">" + rows + box + "</div>";
+        }
 
         list += "</div>";
     }
@@ -1991,26 +2307,46 @@ std::string render_posts(sqlite3_stmt* stmt,
 }
 
 // The posts on somebody's profile.
+// How many posts a profile shows before asking you to say so.
+const int PROFILE_POSTS = 20;
+
 std::string profile_posts_html(int student_id,
                                int viewer_id,
-                               const std::string& back)
+                               const std::string& back,
+                               bool show_all)
 {
     const char* sql =
-        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo, "
+        "       (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id), "
+        "       EXISTS(SELECT 1 FROM likes l "
+        "               WHERE l.post_id = p.id AND l.student_id = ?), "
+        "       (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) "
         "FROM posts p JOIN students s ON s.id = p.student_id "
-        "WHERE p.student_id = ? ORDER BY p.id DESC;";
+        "WHERE p.student_id = ? ORDER BY p.id DESC LIMIT ?;";
+
+    // One more than the page, purely to find out whether there are older ones.
+    int wanted = show_all ? -1 : PROFILE_POSTS + 1;
 
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-    sqlite3_bind_int(stmt, 1, student_id);
+    sqlite3_bind_int(stmt, 1, viewer_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+    sqlite3_bind_int(stmt, 3, wanted);
 
-    std::string list = render_posts(stmt, viewer_id, false, back);
+    std::string list = render_posts(stmt, viewer_id, false, back,
+                                    show_all ? 0 : PROFILE_POSTS);
 
     sqlite3_finalize(stmt);
 
     if (list.empty())
     {
         return "<p class=\"empty\">No posts yet.</p>";
+    }
+
+    if (!show_all && count_posts(student_id) > PROFILE_POSTS)
+    {
+        list += "<a class=\"see-all\" href=\"" + escape_html(back)
+              + "?posts=all\">Show older posts</a>";
     }
 
     return list;
@@ -2021,7 +2357,11 @@ std::string profile_posts_html(int student_id,
 std::string everyone_feed_html(int viewer_id)
 {
     const char* sql =
-        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo, "
+        "       (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id), "
+        "       EXISTS(SELECT 1 FROM likes l "
+        "               WHERE l.post_id = p.id AND l.student_id = ?), "
+        "       (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) "
         "FROM posts p JOIN students s ON s.id = p.student_id "
         "WHERE s.is_private = 0 "
         "   OR s.id = ? "
@@ -2034,6 +2374,7 @@ std::string everyone_feed_html(int viewer_id)
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, viewer_id);
     sqlite3_bind_int(stmt, 2, viewer_id);
+    sqlite3_bind_int(stmt, 3, viewer_id);
 
     std::string list = render_posts(stmt, viewer_id, true, "/");
 
@@ -2056,7 +2397,11 @@ std::string following_feed_html(int viewer_id)
     }
 
     const char* sql =
-        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
+        "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo, "
+        "       (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id), "
+        "       EXISTS(SELECT 1 FROM likes l "
+        "               WHERE l.post_id = p.id AND l.student_id = ?), "
+        "       (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) "
         "FROM posts p "
         "JOIN students s ON s.id = p.student_id "
         "JOIN follows f ON f.following_id = p.student_id "
@@ -2066,6 +2411,7 @@ std::string following_feed_html(int viewer_id)
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, viewer_id);
+    sqlite3_bind_int(stmt, 2, viewer_id);
 
     std::string list = render_posts(stmt, viewer_id, true, "/?tab=following");
 
@@ -2350,7 +2696,8 @@ crow::response edit_page(const Student& student, const std::string& message)
 crow::response profile_page(const Student& student,
                             int user_id,
                             const std::string& message,
-                            bool documents_tab)
+                            bool documents_tab,
+                            bool all_posts)
 {
     bool is_owner = student.id == user_id;
     bool show_details = can_see_details(student, user_id);
@@ -2465,7 +2812,8 @@ crow::response profile_page(const Student& student,
     }
     else
     {
-        content += profile_posts_html(student.id, user_id, "/student/" + id);
+        content += profile_posts_html(student.id, user_id,
+                                      "/student/" + id, all_posts);
     }
 
     html = replace_all(html, "{{CONTENT}}", content);
@@ -2498,6 +2846,14 @@ int main()
         std::cerr << "Could not create the tables.\n";
         return 1;
     }
+
+    // A database made before sessions had a created_at column needs the
+    // column adding. It is already there in a new one, where this fails and
+    // the failure is the answer, so it is not checked.
+    sqlite3_exec(db,
+                 "ALTER TABLE sessions ADD COLUMN created_at TEXT NOT NULL "
+                 "DEFAULT '';",
+                 nullptr, nullptr, nullptr);
 
     crow::SimpleApp app;
 
@@ -2663,8 +3019,11 @@ int main()
 
         const char* tab = req.url_params.get("tab");
 
+        const char* posts = req.url_params.get("posts");
+
         return profile_page(student, user_id, note ? note : "",
-                            tab && std::string(tab) == "documents");
+                            tab && std::string(tab) == "documents",
+                            posts && std::string(posts) == "all");
     });
 
     CROW_ROUTE(app, "/edit")
@@ -2883,6 +3242,7 @@ int main()
             }
 
             delete_post_replies(posted_id(req));
+            delete_post_notifications(posted_id(req));
             delete_post(posted_id(req), user_id);
         }
 
@@ -2908,7 +3268,18 @@ int main()
             return redirect_to("/login");
         }
 
-        toggle_like(posted_id(req), user_id);
+        int post_id = posted_id(req);
+
+        toggle_like(post_id, user_id);
+
+        if (viewer_likes(post_id, user_id))
+        {
+            add_notification(post_id, user_id, "like");
+        }
+        else
+        {
+            remove_like_notification(post_id, user_id);
+        }
 
         return redirect_to(posted_back(req));
     });
@@ -2927,9 +3298,10 @@ int main()
         const char* post_text = form.get("post_id");
         const char* body      = form.get("body");
 
-        if (post_text && body)
+        if (post_text && body
+            && add_comment(std::atoi(post_text), user_id, body))
         {
-            add_comment(std::atoi(post_text), user_id, body);
+            add_notification(std::atoi(post_text), user_id, "comment");
         }
 
         return redirect_to(posted_back(req));
@@ -2950,6 +3322,28 @@ int main()
         delete_comment(posted_id(req), user_id);
 
         return redirect_to(posted_back(req));
+    });
+
+    CROW_ROUTE(app, "/notifications")
+    ([](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        std::string html = read_file("templates/notifications.html");
+
+        // Drawn first, marked seen afterwards, so the page you are looking
+        // at still shows which ones were new.
+        html = replace_all(html, "{{NAV}}", nav_html(user_id));
+        html = replace_all(html, "{{ALERTS}}", notifications_html(user_id));
+
+        mark_notifications_seen(user_id);
+
+        return html_page(html);
     });
 
     CROW_ROUTE(app, "/messages")
@@ -3100,8 +3494,11 @@ int main()
 
         const char* tab = req.url_params.get("tab");
 
+        const char* posts = req.url_params.get("posts");
+
         return profile_page(student, logged_in_id(req), "",
-                            tab && std::string(tab) == "documents");
+                            tab && std::string(tab) == "documents",
+                            posts && std::string(posts) == "all");
     });
 
     CROW_ROUTE(app, "/search")
