@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS follows (
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     student_id INTEGER NOT NULL,
+    -- When the login happened. A session older than the cutoff in main.cpp
+    -- stops working, so a cookie that leaks is not useful forever.
+    created_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (student_id) REFERENCES students(id)
 );
 
@@ -91,3 +94,26 @@ CREATE TABLE IF NOT EXISTS comments (
     FOREIGN KEY (post_id) REFERENCES posts(id),
     FOREIGN KEY (student_id) REFERENCES students(id)
 );
+
+-- "somebody liked your post", "somebody commented on it". One row per event,
+-- for the student being told. You are never told about your own doing.
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL,
+    actor_id INTEGER NOT NULL,
+    post_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (student_id) REFERENCES students(id),
+    FOREIGN KEY (actor_id) REFERENCES students(id),
+    FOREIGN KEY (post_id) REFERENCES posts(id)
+);
+
+-- Without these every one of these lookups reads the whole table. The UNIQUE
+-- pairs on follows and likes are already indexes, so they are not repeated.
+CREATE INDEX IF NOT EXISTS idx_posts_student ON posts(student_id);
+CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
+CREATE INDEX IF NOT EXISTS idx_documents_student ON documents(student_id);
+CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, receiver_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_owner ON notifications(student_id, seen);

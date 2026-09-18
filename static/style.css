@@ -1295,3 +1295,48 @@ a.request:hover {
     margin: 0;
     flex: none;
 }
+
+/* ---------- alerts ---------- */
+
+.badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: #b91c1c;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.alert-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.alert-row:last-child {
+    border-bottom: none;
+}
+
+/* the ones you have not looked at yet stand out until the page is opened */
+.alert-row.unseen {
+    background: var(--accent-soft);
+    margin: 0 -18px;
+    padding-left: 18px;
+    padding-right: 18px;
+}
+
+.alert-text {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.45;
+}
+
+.alert-post {
+    margin: 2px 0;
+    color: var(--muted);
+    overflow-wrap: break-word;
+}
