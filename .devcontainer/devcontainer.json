@@ -2,6 +2,14 @@
   "name": "Student Profiles (C++ / Crow)",
   "image": "mcr.microsoft.com/devcontainers/cpp:ubuntu-24.04",
 
+  // The C++ image has no SSH server, and without one the codespace
+  // cannot be reached from the gh command line, only from the browser.
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    }
+  },
+
   // Kept from failing the whole creation: a container that comes up with
   // an unfinished build can still be worked in, while a failure here
   // would replace it with the bare recovery image.
