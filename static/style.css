@@ -1185,3 +1185,113 @@ a.request:hover {
         justify-content: center;
     }
 }
+
+/* ---------- likes and comments ---------- */
+
+.post-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.post-actions form {
+    display: block;
+    margin: 0;
+}
+
+.like-button {
+    margin: 0;
+    padding: 5px 13px;
+    font-size: 13px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+}
+
+.like-button:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+/* once you have liked it the heart is filled in and stays coloured */
+.like-button.liked {
+    border-color: #fecaca;
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.like-count {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.comments {
+    margin-top: 12px;
+}
+
+.comment {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+
+.comment-who {
+    flex: none;
+    line-height: 0;
+}
+
+.small-thumb {
+    width: 32px;
+    height: 32px;
+}
+
+.comment-text {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.4;
+}
+
+.comment-name {
+    color: var(--text);
+    text-decoration: none;
+}
+
+.comment-name:hover {
+    text-decoration: underline;
+}
+
+.comment-body {
+    margin: 2px 0 0;
+    /* a long word with no spaces in it should not widen the card */
+    overflow-wrap: break-word;
+}
+
+.comment form {
+    flex: none;
+    margin: 0;
+}
+
+.comment-form {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.comment-form input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+
+.comment-form button {
+    margin: 0;
+    flex: none;
+}
