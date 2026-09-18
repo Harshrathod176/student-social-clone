@@ -68,3 +68,26 @@ CREATE TABLE IF NOT EXISTS link_previews (
     image TEXT NOT NULL DEFAULT '',
     site TEXT NOT NULL DEFAULT ''
 );
+
+-- One row per student per post. The UNIQUE pair is what stops a student
+-- liking the same post twice.
+CREATE TABLE IF NOT EXISTS likes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    UNIQUE (post_id, student_id),
+    FOREIGN KEY (post_id) REFERENCES posts(id),
+    FOREIGN KEY (student_id) REFERENCES students(id)
+);
+
+-- A reply written under a post. The student who wrote the comment can take
+-- it back, and so can the student whose post it sits under.
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (post_id) REFERENCES posts(id),
+    FOREIGN KEY (student_id) REFERENCES students(id)
+);

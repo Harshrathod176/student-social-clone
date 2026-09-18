@@ -1060,6 +1060,155 @@ void delete_post(int post_id, int student_id)
     sqlite3_finalize(stmt);
 }
 
+// ---------- likes and comments ----------
+
+int count_likes(int post_id)
+{
+    const char* sql = "SELECT COUNT(*) FROM likes WHERE post_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+
+    int total = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        total = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return total;
+}
+
+int count_comments(int post_id)
+{
+    const char* sql = "SELECT COUNT(*) FROM comments WHERE post_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+
+    int total = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        total = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return total;
+}
+
+bool viewer_likes(int post_id, int student_id)
+{
+    if (student_id == 0)
+    {
+        return false;
+    }
+
+    const char* sql =
+        "SELECT 1 FROM likes WHERE post_id = ? AND student_id = ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+// Pressing the heart a second time takes the like back.
+void toggle_like(int post_id, int student_id)
+{
+    bool already = viewer_likes(post_id, student_id);
+
+    // The SELECT ... WHERE EXISTS keeps a like for a post that is not there
+    // from ever being written.
+    const char* sql = already
+        ? "DELETE FROM likes WHERE post_id = ? AND student_id = ?;"
+        : "INSERT OR IGNORE INTO likes(post_id, student_id) "
+          "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+
+    if (!already)
+    {
+        sqlite3_bind_int(stmt, 3, post_id);
+    }
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+bool add_comment(int post_id, int student_id, const std::string& body)
+{
+    if (body.empty() || body.size() > 500)
+    {
+        return false;
+    }
+
+    const char* sql =
+        "INSERT INTO comments(post_id, student_id, body) "
+        "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+    sqlite3_bind_text(stmt, 3, body.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, post_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return true;
+}
+
+// A comment goes when you wrote it yourself, or when the post it sits under
+// is yours. Anybody else asking for the same id changes nothing.
+void delete_comment(int comment_id, int student_id)
+{
+    const char* sql =
+        "DELETE FROM comments WHERE id = ? AND ("
+        "    student_id = ? "
+        " OR post_id IN (SELECT id FROM posts WHERE student_id = ?));";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, comment_id);
+    sqlite3_bind_int(stmt, 2, student_id);
+    sqlite3_bind_int(stmt, 3, student_id);
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+// The likes and comments of a deleted post have nothing left to sit under.
+void delete_post_replies(int post_id)
+{
+    const char* statements[] = {
+        "DELETE FROM likes WHERE post_id = ?;",
+        "DELETE FROM comments WHERE post_id = ?;"
+    };
+
+    for (const char* sql : statements)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, post_id);
+
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+}
+
 // ---------- following ----------
 
 // Returns "accepted", "pending", or "" when there is no follow at all.
@@ -1616,13 +1765,162 @@ std::string attachment_preview(const std::string& path)
     return out;
 }
 
-std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
+// Where a like or a comment button should send you back to. It comes from a
+// hidden field in the form, so anything that is not a path on this site is
+// thrown away rather than followed.
+std::string safe_back(const std::string& back)
+{
+    if (back.size() < 2 || back[0] != '/' || back[1] == '/')
+    {
+        return "/";
+    }
+
+    return back;
+}
+
+// The heart, the count, and how many comments there are.
+std::string post_actions_html(int post_id, int viewer_id, const std::string& back)
+{
+    std::string id    = std::to_string(post_id);
+    int likes         = count_likes(post_id);
+    int comments      = count_comments(post_id);
+    bool liked        = viewer_likes(post_id, viewer_id);
+
+    std::string out;
+
+    out += "<div class=\"post-actions\">";
+
+    if (viewer_id == 0)
+    {
+        // A visitor who is not logged in sees the count but cannot press it.
+        out += "<span class=\"like-count\">";
+        out += liked ? "&#9829; " : "&#9825; ";
+        out += std::to_string(likes);
+        out += "</span>";
+    }
+    else
+    {
+        out += "<form action=\"/post/like\" method=\"post\">";
+        out += "<input type=\"hidden\" name=\"id\" value=\"" + id + "\">";
+        out += "<input type=\"hidden\" name=\"back\" value=\""
+             + escape_html(back) + "\">";
+        out += "<button class=\"like-button";
+        out += liked ? " liked" : "";
+        out += "\" type=\"submit\">";
+        out += liked ? "&#9829; " : "&#9825; ";
+        out += std::to_string(likes);
+        out += "</button>";
+        out += "</form>";
+    }
+
+    out += "<span class=\"small\">";
+    out += std::to_string(comments);
+    out += comments == 1 ? " comment" : " comments";
+    out += "</span>";
+
+    out += "</div>";
+
+    return out;
+}
+
+// Everything under the line: the comments themselves, then the box for
+// writing one.
+std::string comments_html(int post_id,
+                          int post_author_id,
+                          int viewer_id,
+                          const std::string& back)
+{
+    const char* sql =
+        "SELECT c.id, c.body, c.created_at, s.id, s.username, s.photo "
+        "FROM comments c JOIN students s ON s.id = c.student_id "
+        "WHERE c.post_id = ? ORDER BY c.id;";
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    sqlite3_bind_int(stmt, 1, post_id);
+
+    std::string out;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        std::string comment_id = std::to_string(sqlite3_column_int(stmt, 0));
+        std::string body       = escape_html(column_text(stmt, 1));
+        std::string when       = escape_html(column_text(stmt, 2));
+        int author_id          = sqlite3_column_int(stmt, 3);
+        std::string author     = escape_html(column_text(stmt, 4));
+        std::string photo      = escape_html(column_text(stmt, 5));
+
+        if (when.size() > 16)
+        {
+            when = when.substr(0, 16);
+        }
+
+        out += "<div class=\"comment\">";
+
+        out += "<a class=\"comment-who\" href=\"/student/"
+             + std::to_string(author_id) + "\">";
+        out += "<img class=\"thumb small-thumb\" src=\"" + photo + "\" alt=\"\">";
+        out += "</a>";
+
+        out += "<div class=\"comment-text\">";
+        out += "<a class=\"comment-name\" href=\"/student/"
+             + std::to_string(author_id) + "\"><b>" + author + "</b></a> ";
+        out += "<span class=\"small\">" + when + "</span>";
+        out += "<p class=\"comment-body\">" + linkify(body) + "</p>";
+        out += "</div>";
+
+        // Your own comment is yours to remove, and so is any comment sitting
+        // under a post of yours.
+        if (viewer_id != 0
+            && (author_id == viewer_id || post_author_id == viewer_id))
+        {
+            out += "<form action=\"/comment/delete\" method=\"post\">";
+            out += "<input type=\"hidden\" name=\"id\" value=\"" + comment_id + "\">";
+            out += "<input type=\"hidden\" name=\"back\" value=\""
+                 + escape_html(back) + "\">";
+            out += "<button class=\"delete-button\" type=\"submit\" "
+                   "onclick=\"return confirm('Delete this comment?')\">"
+                   "Delete</button>";
+            out += "</form>";
+        }
+
+        out += "</div>";
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (viewer_id != 0)
+    {
+        out += "<form class=\"comment-form\" action=\"/comment\" method=\"post\">";
+        out += "<input type=\"hidden\" name=\"post_id\" value=\""
+             + std::to_string(post_id) + "\">";
+        out += "<input type=\"hidden\" name=\"back\" value=\""
+             + escape_html(back) + "\">";
+        out += "<input type=\"text\" name=\"body\" maxlength=\"500\" "
+               "placeholder=\"Write a comment\">";
+        out += "<button type=\"submit\">Send</button>";
+        out += "</form>";
+    }
+
+    if (out.empty())
+    {
+        return "";
+    }
+
+    return "<div class=\"comments\">" + out + "</div>";
+}
+
+std::string render_posts(sqlite3_stmt* stmt,
+                         int viewer_id,
+                         bool show_who,
+                         const std::string& back)
 {
     std::string list;
 
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        std::string post_id  = std::to_string(sqlite3_column_int(stmt, 0));
+        int post_number      = sqlite3_column_int(stmt, 0);
+        std::string post_id  = std::to_string(post_number);
         std::string body     = escape_html(column_text(stmt, 1));
         std::string file     = escape_html(column_text(stmt, 2));
         std::string when     = escape_html(column_text(stmt, 3));
@@ -1683,6 +1981,9 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
             }
         }
 
+        list += post_actions_html(post_number, viewer_id, back);
+        list += comments_html(post_number, author_id, viewer_id, back);
+
         list += "</div>";
     }
 
@@ -1690,7 +1991,9 @@ std::string render_posts(sqlite3_stmt* stmt, int viewer_id, bool show_who)
 }
 
 // The posts on somebody's profile.
-std::string profile_posts_html(int student_id, int viewer_id)
+std::string profile_posts_html(int student_id,
+                               int viewer_id,
+                               const std::string& back)
 {
     const char* sql =
         "SELECT p.id, p.body, p.file_path, p.created_at, s.id, s.username, s.photo "
@@ -1701,7 +2004,7 @@ std::string profile_posts_html(int student_id, int viewer_id)
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, student_id);
 
-    std::string list = render_posts(stmt, viewer_id, false);
+    std::string list = render_posts(stmt, viewer_id, false, back);
 
     sqlite3_finalize(stmt);
 
@@ -1732,7 +2035,7 @@ std::string everyone_feed_html(int viewer_id)
     sqlite3_bind_int(stmt, 1, viewer_id);
     sqlite3_bind_int(stmt, 2, viewer_id);
 
-    std::string list = render_posts(stmt, viewer_id, true);
+    std::string list = render_posts(stmt, viewer_id, true, "/");
 
     sqlite3_finalize(stmt);
 
@@ -1764,7 +2067,7 @@ std::string following_feed_html(int viewer_id)
     sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     sqlite3_bind_int(stmt, 1, viewer_id);
 
-    std::string list = render_posts(stmt, viewer_id, true);
+    std::string list = render_posts(stmt, viewer_id, true, "/?tab=following");
 
     sqlite3_finalize(stmt);
 
@@ -2162,7 +2465,7 @@ crow::response profile_page(const Student& student,
     }
     else
     {
-        content += profile_posts_html(student.id, user_id);
+        content += profile_posts_html(student.id, user_id, "/student/" + id);
     }
 
     html = replace_all(html, "{{CONTENT}}", content);
@@ -2579,10 +2882,74 @@ int main()
                 std::remove(("." + file_path).c_str());
             }
 
+            delete_post_replies(posted_id(req));
             delete_post(posted_id(req), user_id);
         }
 
         return redirect_to("/profile");
+    });
+
+    // A form sends back the page it was pressed on, so a like on the home
+    // feed returns to the home feed and one on a profile stays there.
+    auto posted_back = [](const crow::request& req)
+    {
+        crow::query_string form("?" + req.body);
+        const char* back = form.get("back");
+        return safe_back(back ? back : "/");
+    };
+
+    CROW_ROUTE(app, "/post/like").methods(crow::HTTPMethod::POST)
+    ([posted_id, posted_back](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        toggle_like(posted_id(req), user_id);
+
+        return redirect_to(posted_back(req));
+    });
+
+    CROW_ROUTE(app, "/comment").methods(crow::HTTPMethod::POST)
+    ([posted_back](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        crow::query_string form("?" + req.body);
+        const char* post_text = form.get("post_id");
+        const char* body      = form.get("body");
+
+        if (post_text && body)
+        {
+            add_comment(std::atoi(post_text), user_id, body);
+        }
+
+        return redirect_to(posted_back(req));
+    });
+
+    CROW_ROUTE(app, "/comment/delete").methods(crow::HTTPMethod::POST)
+    ([posted_id, posted_back](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+
+        if (user_id == 0)
+        {
+            return redirect_to("/login");
+        }
+
+        // The SQL only removes a comment you wrote or one under a post of
+        // yours, so anybody else pressing this changes nothing.
+        delete_comment(posted_id(req), user_id);
+
+        return redirect_to(posted_back(req));
     });
 
     CROW_ROUTE(app, "/messages")
