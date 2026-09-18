@@ -12,9 +12,12 @@ fi
 
 echo "--- system packages ---"
 sudo apt-get update
+# autoconf, automake and libtool are not optional: vcpkg builds libsodium
+# with autotools and stops without them.
 sudo apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build git curl zip unzip tar \
-    pkg-config libcurl4-openssl-dev
+    pkg-config libcurl4-openssl-dev \
+    autoconf automake libtool autoconf-archive
 
 echo "--- vcpkg ---"
 # The C++ image normally ships vcpkg, but not every image does, so check
