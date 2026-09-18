@@ -116,4 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_student ON posts(student_id);
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
 CREATE INDEX IF NOT EXISTS idx_documents_student ON documents(student_id);
 CREATE INDEX IF NOT EXISTS idx_messages_pair ON messages(sender_id, receiver_id);
+-- The pair above is no help to a lookup that starts at the receiver,
+-- which is how the inbox finds who has written to you.
+CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_owner ON notifications(student_id, seen);
