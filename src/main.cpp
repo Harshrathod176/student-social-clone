@@ -110,6 +110,21 @@ crow::response redirect_to(const std::string& path)
     return res;
 }
 
+// Secure is only added when the request really arrived over https. Marking
+// it always would stop the browser sending the cookie back over plain
+// http://localhost, which is how the server is run while working on it.
+std::string cookie_flags(const crow::request& req)
+{
+    std::string flags = "; Path=/; HttpOnly; SameSite=Strict";
+
+    if (req.get_header_value("X-Forwarded-Proto") == "https")
+    {
+        flags += "; Secure";
+    }
+
+    return flags;
+}
+
 std::string get_cookie(const crow::request& req, const std::string& name)
 {
     std::string cookies = req.get_header_value("Cookie");
@@ -2987,8 +3002,7 @@ int main()
         create_session(token, id);
 
         crow::response res = redirect_to("/profile");
-        res.set_header("Set-Cookie",
-                       "session=" + token + "; Path=/; HttpOnly; SameSite=Strict");
+        res.set_header("Set-Cookie", "session=" + token + cookie_flags(req));
         return res;
     });
 
@@ -3000,7 +3014,7 @@ int main()
 
         crow::response res = redirect_to("/login");
         res.set_header("Set-Cookie",
-                       "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+                       "session=" + cookie_flags(req) + "; Max-Age=0");
         return res;
     });
 
