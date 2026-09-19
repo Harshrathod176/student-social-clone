@@ -1,0 +1,18 @@
+# Caddy terminates TLS and passes the request to the app on 8090. It gets a
+# real certificate from Let's Encrypt automatically and renews it on its own.
+#
+# It also sets X-Forwarded-Proto, which is what makes the app mark the session
+# cookie Secure - without a proxy in front, that flag never gets set.
+DOMAIN_PLACEHOLDER {
+    reverse_proxy 127.0.0.1:8090
+
+    # Uploads are user-supplied files served back to other users. Telling the
+    # browser not to guess at their type stops a file that claims to be a
+    # picture from being run as script on the site's own origin.
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+    }
+
+    encode gzip
+}
