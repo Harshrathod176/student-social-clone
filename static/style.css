@@ -54,6 +54,14 @@ nav {
     color: var(--accent);
 }
 
+/* The links live in their own box so that on a phone they can be one row
+   that scrolls, while the brand keeps the line above to itself. */
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 nav a {
     color: var(--muted);
     text-decoration: none;
@@ -438,18 +446,44 @@ button.danger:hover {
        full height, and it is one flick to the top to get it back. */
     nav {
         position: static;
+        padding: 10px 0 8px;
+        gap: 0;
     }
 
-    /* Taller than it needs to look, so the links are big enough to hit with
-       a thumb. The horizontal padding stays tight to keep them on one row. */
+    /* Signed in there are six links needing some 430px, and no phone is that
+       wide. Shrinking them far enough to fit made them too small to hit, so
+       they stay a comfortable size and the row scrolls sideways instead.
+       That way the height is two rows whatever the width and however many
+       links there turn out to be. */
+    .nav-links {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 2px;
+        padding: 0 10px;
+        /* Centred while they fit; "safe" keeps the first link reachable
+           rather than centring them off the left edge once they do not. */
+        justify-content: center;
+        justify-content: safe center;
+        scrollbar-width: none;
+    }
+
+    .nav-links::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* Without this the links squeeze themselves thin instead of scrolling. */
+    .nav-links a {
+        flex: none;
+    }
+
     nav a {
         font-size: 13px;
         padding: 9px;
     }
 
-    /* Six links do not fit across a phone, so the nav wrapped onto a third
-       row and, being sticky, kept that height for the whole visit. "My
-       Profile" is the longest label and the only one with a word to spare. */
+    /* "My Profile" is the longest label and the only one with a word it can
+       do without, which buys back some of the scrolling. */
     .nav-long {
         display: none;
     }
