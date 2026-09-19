@@ -15,6 +15,10 @@
   // would replace it with the bare recovery image.
   "onCreateCommand": "bash .devcontainer/setup.sh || echo 'SETUP FAILED - read the errors above, then run ./.devcontainer/setup.sh by hand'",
 
+  // Brings the server back up on its own whenever the codespace is started or
+  // resumed, so a stop does not leave the site dead until someone SSHes in.
+  "postStartCommand": "bash .devcontainer/start-server.sh",
+
   "forwardPorts": [8090],
   "portsAttributes": {
     "8090": {
