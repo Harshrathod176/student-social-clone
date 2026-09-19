@@ -1,0 +1,12 @@
+# Real student records and real people's photos. These belong on the mounted
+# volume, never baked into an image that gets pushed to a registry - a deleted
+# file still sits in the layer it was added in and can be read back out.
+data/
+static/uploads/
+
+# Not needed to build or run, and the build context is uploaded on every deploy.
+.git/
+.devcontainer/
+build/
+docs/
+*.md

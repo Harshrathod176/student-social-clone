@@ -1,0 +1,27 @@
+app = "student-social-clone"
+primary_region = "bom"
+
+[build]
+
+[env]
+  PORT = "8080"
+  DB_PATH = "/data/students.db"
+
+[http_service]
+  internal_port = 8080
+  # The app sets Secure on the session cookie only when X-Forwarded-Proto says
+  # https, which is what this makes true for every request.
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # SQLite is a single file on one volume: a second machine writing to its own
+  # copy would split the data in two, so this app runs exactly one.
+  min_machines_running = 0
+
+[[mounts]]
+  source = "student_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

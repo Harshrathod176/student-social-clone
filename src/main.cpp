@@ -3,6 +3,7 @@
 #include <sodium.h>
 #include <curl/curl.h>
 
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <map>
@@ -13,6 +14,15 @@
 sqlite3* db = nullptr;
 
 // ---------- small helpers ----------
+
+// A hosting platform hands the port and the data location to the program
+// through the environment, so neither can be fixed at compile time. The
+// defaults are the ones used while working on it locally.
+std::string env_or(const char* name, const std::string& fallback)
+{
+    const char* value = std::getenv(name);
+    return (value != nullptr && *value != '\0') ? std::string(value) : fallback;
+}
 
 std::string read_file(const std::string& path)
 {
@@ -2848,7 +2858,9 @@ int main()
         return 1;
     }
 
-    if (sqlite3_open("data/students.db", &db) != SQLITE_OK)
+    std::string db_path = env_or("DB_PATH", "data/students.db");
+
+    if (sqlite3_open(db_path.c_str(), &db) != SQLITE_OK)
     {
         std::cerr << "Could not open the database.\n";
         return 1;
@@ -3549,9 +3561,11 @@ int main()
         return html_page(html);
     });
 
-    std::cout << "Open http://localhost:8090 in your browser.\n";
+    int port = std::atoi(env_or("PORT", "8090").c_str());
 
-    app.port(8090).multithreaded().run();
+    std::cout << "Open http://localhost:" << port << " in your browser.\n";
+
+    app.port(static_cast<uint16_t>(port)).multithreaded().run();
 
     sqlite3_close(db);
     return 0;
