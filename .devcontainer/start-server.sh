@@ -18,5 +18,20 @@ if [ ! -x ./build/student_profiles ]; then
     exit 0
 fi
 
-nohup ./.devcontainer/run.sh > /tmp/server.log 2>&1 < /dev/null &
-echo "server starting on port 8090, log in /tmp/server.log"
+# setsid, not a plain background job. The devcontainer CLI kills the
+# postStartCommand's process group the moment the command returns, and that
+# reaps an ordinary '&' child before it has even opened its log file.
+setsid nohup ./.devcontainer/run.sh > /tmp/server.log 2>&1 < /dev/null &
+
+# Hold the start open until the port answers, so a codespace is not reported
+# ready while the site is still dead, and so a failed start is visible in the
+# creation log rather than silent.
+for _ in $(seq 1 30); do
+    if curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8090/; then
+        echo "server up on port 8090"
+        exit 0
+    fi
+    sleep 1
+done
+
+echo "server did not answer on 8090 within 30s - see /tmp/server.log" >&2
