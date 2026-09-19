@@ -5,11 +5,24 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # A resumed codespace can still hold the old process; don't stack a second one
-# on the same port.
-if pgrep -f '[s]tudent_profiles' > /dev/null; then
-    echo "server already running on port 8090"
-    exit 0
-fi
+# on the same port. It has to be *this* copy though: the test script runs the
+# same binary from a directory under /tmp, and one of those left behind goes
+# on answering on the port with its own throwaway database. Finding any
+# process called student_profiles was not enough to tell those apart.
+here="$(pwd -P)"
+
+for pid in $(pgrep -f '[s]tudent_profiles'); do
+    if [ "$(readlink -f "/proc/$pid/cwd" 2> /dev/null)" = "$here" ]; then
+        echo "server already running on port 8090"
+        exit 0
+    fi
+
+    # Same binary, somewhere else: a leftover holding the port we need.
+    echo "stopping a stray server from $(readlink "/proc/$pid/cwd" 2> /dev/null)" >&2
+    kill "$pid" 2> /dev/null
+done
+
+sleep 1
 
 # A container whose build never finished has no binary. Say so and let the
 # codespace start anyway: a failure here would block the whole session.

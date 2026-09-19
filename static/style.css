@@ -433,9 +433,18 @@ button.danger:hover {
         text-align: center;
     }
 
+    /* Two rows of navigation is a lot of a short screen to give up for the
+       whole visit. Unstuck it scrolls away with the page, the feed gets the
+       full height, and it is one flick to the top to get it back. */
+    nav {
+        position: static;
+    }
+
+    /* Taller than it needs to look, so the links are big enough to hit with
+       a thumb. The horizontal padding stays tight to keep them on one row. */
     nav a {
         font-size: 13px;
-        padding: 6px 9px;
+        padding: 9px;
     }
 
     /* Six links do not fit across a phone, so the nav wrapped onto a third
@@ -505,6 +514,12 @@ button.danger:hover {
 
     .two-columns {
         grid-template-columns: 1fr;
+    }
+
+    /* The send button was carrying desktop padding and taking room the
+       comment box needed more than it did. */
+    .comment-form button {
+        padding: 10px 14px;
     }
 
     .profile-head {
