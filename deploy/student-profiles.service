@@ -1,0 +1,25 @@
+[Unit]
+Description=Student Profiles
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+# Every path in main.cpp is relative to the project root - the database, the
+# templates and the uploads all resolve from here.
+WorkingDirectory=/opt/student-profiles
+ExecStart=/opt/student-profiles/build/student_profiles
+Restart=always
+RestartSec=3
+
+# The app only ever needs its own directory. Everything else on the box is
+# read-only to it, so a bug in file handling cannot reach the rest of the disk.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/student-profiles/data /opt/student-profiles/static/uploads
+
+[Install]
+WantedBy=multi-user.target
