@@ -6,6 +6,7 @@
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -490,6 +491,123 @@ void set_password(int student_id, const std::string& hash)
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+}
+
+// ---------- login throttling ----------
+
+// Argon2 is slow on purpose, which is what makes a stolen password file hard
+// to crack. On a login form open to the internet that same cost cuts the
+// other way: a few hundred guesses in parallel would use every core on the
+// machine and take the site down for everyone. So attempts are counted and
+// capped before a hash is ever computed.
+const int MAX_LOGIN_FAILURES = 8;
+// Far looser, and deliberately so. A whole college behind one campus router
+// shares an address, as does everyone reaching the site through a proxy, so a
+// limit low enough to catch one person guessing would lock out their entire
+// year along with them. This is set to catch somebody working through a list
+// of usernames, which no ordinary group of people ever looks like.
+const int MAX_ADDRESS_FAILURES = 40;
+const int LOGIN_WINDOW_SECONDS = 600;
+const int LOGIN_LOCKOUT_SECONDS = 600;
+
+struct LoginFailures
+{
+    int count = 0;
+    std::time_t first = 0;
+    std::time_t locked_until = 0;
+};
+
+// Crow answers requests on several threads, so every function below holds
+// this while it touches the map.
+std::mutex login_guard;
+std::map<std::string, LoginFailures> login_failures;
+
+// Guessed usernames would otherwise pile up in the map forever, one entry per
+// name ever tried. Anything neither locked nor recent is of no further use.
+void forget_stale_failures(std::time_t now)
+{
+    for (auto it = login_failures.begin(); it != login_failures.end(); )
+    {
+        bool locked = it->second.locked_until > now;
+        bool recent = now - it->second.first < LOGIN_WINDOW_SECONDS;
+
+        if (locked || recent)
+        {
+            ++it;
+        }
+        else
+        {
+            it = login_failures.erase(it);
+        }
+    }
+}
+
+bool login_locked(const std::string& key)
+{
+    std::lock_guard<std::mutex> hold(login_guard);
+
+    auto found = login_failures.find(key);
+
+    return found != login_failures.end()
+        && found->second.locked_until > std::time(nullptr);
+}
+
+void note_login_failure(const std::string& key, int limit)
+{
+    std::time_t now = std::time(nullptr);
+
+    std::lock_guard<std::mutex> hold(login_guard);
+    forget_stale_failures(now);
+
+    LoginFailures& record = login_failures[key];
+
+    // Failures have to be close together to count. A wrong password today and
+    // another next week is somebody forgetting, not somebody guessing.
+    if (record.first == 0 || now - record.first >= LOGIN_WINDOW_SECONDS)
+    {
+        record.first = now;
+        record.count = 0;
+    }
+
+    record.count += 1;
+
+    if (record.count >= limit)
+    {
+        record.locked_until = now + LOGIN_LOCKOUT_SECONDS;
+        record.count = 0;
+        record.first = now;
+    }
+}
+
+void clear_login_failures(const std::string& key)
+{
+    std::lock_guard<std::mutex> hold(login_guard);
+    login_failures.erase(key);
+}
+
+// Behind a proxy every request arrives from the proxy's own address, so the
+// forwarded header is the only thing that tells visitors apart. Nothing stops
+// someone sending that header by hand, which is why the username is counted
+// separately: that one cannot be forged away.
+std::string client_address(const crow::request& req)
+{
+    std::string forwarded = req.get_header_value("X-Forwarded-For");
+
+    if (!forwarded.empty())
+    {
+        size_t comma = forwarded.find(',');
+        std::string first = forwarded.substr(0, comma);
+
+        size_t start = first.find_first_not_of(" \t");
+        size_t end = first.find_last_not_of(" \t");
+
+        if (start != std::string::npos)
+        {
+            return first.substr(start, end - start + 1);
+        }
+    }
+
+    return req.remote_ip_address;
 }
 
 int check_login(const std::string& username, const std::string& password)
@@ -1425,6 +1543,77 @@ void remove_follow(int follower_id, int following_id)
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+}
+
+// Everything a student leaves behind, taken out together. The file paths are
+// read out of the rows first, because once the rows are gone there is nothing
+// left to say which files on disk belonged to them.
+void delete_account(int student_id)
+{
+    std::vector<std::string> files;
+
+    const char* file_sql[] = {
+        "SELECT photo FROM students WHERE id = ?;",
+        "SELECT file_path FROM posts WHERE student_id = ? AND file_path <> '';",
+        "SELECT file_path FROM documents WHERE student_id = ?;"
+    };
+
+    for (const char* sql : file_sql)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, student_id);
+
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            std::string path = column_text(stmt, 0);
+
+            if (!path.empty())
+            {
+                files.push_back(path);
+            }
+        }
+
+        sqlite3_finalize(stmt);
+    }
+
+    // One transaction: an account deleted halfway would leave comments and
+    // messages pointing at a student who is no longer there, and every page
+    // that joins against them would come up empty or wrong.
+    const char* row_sql[] = {
+        "DELETE FROM notifications WHERE student_id = ?1 OR actor_id = ?1"
+        " OR post_id IN (SELECT id FROM posts WHERE student_id = ?1);",
+        "DELETE FROM likes WHERE student_id = ?1"
+        " OR post_id IN (SELECT id FROM posts WHERE student_id = ?1);",
+        "DELETE FROM comments WHERE student_id = ?1"
+        " OR post_id IN (SELECT id FROM posts WHERE student_id = ?1);",
+        "DELETE FROM messages WHERE sender_id = ?1 OR receiver_id = ?1;",
+        "DELETE FROM follows WHERE follower_id = ?1 OR following_id = ?1;",
+        "DELETE FROM documents WHERE student_id = ?1;",
+        "DELETE FROM posts WHERE student_id = ?1;",
+        "DELETE FROM sessions WHERE student_id = ?1;",
+        "DELETE FROM students WHERE id = ?1;"
+    };
+
+    sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+
+    for (const char* sql : row_sql)
+    {
+        sqlite3_stmt* stmt = nullptr;
+        sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, student_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+
+    // Files afterwards. Had the rows failed to go, profiles would already be
+    // pointing at pictures that were no longer on disk.
+    for (const std::string& path : files)
+    {
+        std::remove(("." + path).c_str());
+    }
 }
 
 void accept_follow(int follower_id, int following_id)
@@ -2989,12 +3178,29 @@ int main()
             return form_page("templates/login.html", 0, "Please fill in both fields.");
         }
 
+        // Counted two ways: the username cannot be forged, and the address
+        // stops one person working through a list of names.
+        std::string by_name = "user:" + lowercase(username);
+        std::string by_address = "address:" + client_address(req);
+
+        if (login_locked(by_name) || login_locked(by_address))
+        {
+            return form_page("templates/login.html", 0,
+                             "Too many attempts. Wait a few minutes, then try again.");
+        }
+
         int id = check_login(username, password);
 
         if (id == 0)
         {
+            note_login_failure(by_name, MAX_LOGIN_FAILURES);
+            note_login_failure(by_address, MAX_ADDRESS_FAILURES);
+
             return form_page("templates/login.html", 0, "Wrong username or password.");
         }
+
+        clear_login_failures(by_name);
+        clear_login_failures(by_address);
 
         // HttpOnly keeps JavaScript away from the cookie, and SameSite stops
         // another website making your browser send it.
@@ -3013,6 +3219,39 @@ int main()
         delete_session(get_cookie(req, "session"));
 
         crow::response res = redirect_to("/login");
+        res.set_header("Set-Cookie",
+                       "session=" + cookie_flags(req) + "; Max-Age=0");
+        return res;
+    });
+
+    CROW_ROUTE(app, "/account/delete").methods(crow::HTTPMethod::POST)
+    ([](const crow::request& req)
+    {
+        int user_id = logged_in_id(req);
+        Student student;
+
+        if (user_id == 0 || !get_student(user_id, student))
+        {
+            return redirect_to("/login");
+        }
+
+        crow::query_string form("?" + req.body);
+        const char* password = form.get("password");
+
+        // The password is asked for again because this cannot be undone. A
+        // borrowed laptop left signed in should not be two clicks away from
+        // wiping somebody's account.
+        if (!password || check_login(student.username, password) == 0)
+        {
+            return edit_page(student,
+                             "That password is not right, so nothing was deleted.");
+        }
+
+        delete_account(user_id);
+
+        // The session rows went with the account, so the cookie already points
+        // at nothing. Clearing it stops the browser sending a dead token.
+        crow::response res = redirect_to("/");
         res.set_header("Set-Cookie",
                        "session=" + cookie_flags(req) + "; Max-Age=0");
         return res;

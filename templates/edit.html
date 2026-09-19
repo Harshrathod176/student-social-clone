@@ -79,6 +79,24 @@
         </form>
     </div>
 
+    <div class="panel danger-panel">
+
+        <h3>Delete account</h3>
+
+        <p class="muted small-note">
+            This removes your profile, your posts and comments, your documents,
+            your messages and every file you have uploaded. It cannot be undone
+            and nothing can be recovered afterwards.
+        </p>
+
+        <form action="/account/delete" method="post">
+            <label>Confirm your password</label>
+            <input type="password" name="password" required>
+            <button type="submit" class="danger">Delete my account</button>
+        </form>
+
+    </div>
+
     <p class="form-footer"><a href="/profile">Back to my profile</a></p>
 
 </div>
