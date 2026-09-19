@@ -422,8 +422,8 @@ button.danger:hover {
     /* The brand sits on its own line and the links share the line below it. */
     nav {
         justify-content: center;
-        gap: 4px;
-        padding: 12px 14px;
+        gap: 3px;
+        padding: 12px 10px;
     }
 
     .brand {
@@ -434,8 +434,15 @@ button.danger:hover {
     }
 
     nav a {
-        font-size: 14px;
-        padding: 7px 10px;
+        font-size: 13px;
+        padding: 6px 9px;
+    }
+
+    /* Six links do not fit across a phone, so the nav wrapped onto a third
+       row and, being sticky, kept that height for the whole visit. "My
+       Profile" is the longest label and the only one with a word to spare. */
+    .nav-long {
+        display: none;
     }
 
     .wrap {
@@ -1046,9 +1053,20 @@ a.request:hover {
     margin-top: 10px;
 }
 
-@media (max-width: 600px) {
-    .pdf-preview object {
-        height: 300px;
+/* A phone will not draw a PDF inside the page - Android Chrome and iOS Safari
+   both decline - and a page cannot ask in advance whether it will. The object
+   box keeps its height whether or not anything was drawn in it, so the
+   fallback line ends up stranded in a tall empty rectangle. On a touch screen
+   the embed is dropped and the link below it does the whole job. */
+@media (hover: none), (max-width: 600px) {
+    .pdf-preview {
+        display: none;
+    }
+
+    /* Nothing sits above the link now, so it takes the spacing the preview
+       used to provide. */
+    .post .pdf-preview + .document-link {
+        margin-top: 12px;
     }
 }
 

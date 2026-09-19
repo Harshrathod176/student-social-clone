@@ -1920,7 +1920,7 @@ std::string nav_html(int user_id)
 
         links += "</a>";
 
-        links += "<a href=\"/profile\">My Profile</a>";
+        links += "<a href=\"/profile\"><span class=\"nav-long\">My </span>Profile</a>";
         links += "<a class=\"nav-button\" href=\"/logout\">Logout</a>";
     }
 
