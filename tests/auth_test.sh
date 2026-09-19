@@ -21,6 +21,8 @@ FAILED=0
 cleanup() {
     pkill -f "$SANDBOX/student_profiles" 2> /dev/null
     sleep 1
+    # Belt and braces: nothing of this run may be left holding the port.
+    pgrep -f "$SANDBOX" > /dev/null && pkill -9 -f "$SANDBOX" 2> /dev/null
     rm -rf "$SANDBOX" "$SANDBOX.png" "$SANDBOX.jar"
     [ -x "$ROOT/.devcontainer/start-server.sh" ] && bash "$ROOT/.devcontainer/start-server.sh" > /dev/null 2>&1
     echo
@@ -60,7 +62,11 @@ cp -r "$ROOT/templates" "$ROOT/database" "$SANDBOX/"
 cp "$ROOT/static/style.css" "$SANDBOX/static/" 2> /dev/null
 
 cd "$SANDBOX"
-setsid nohup ./student_profiles > "$SANDBOX.log" 2>&1 < /dev/null &
+# Started by its full path on purpose. Launched as ./student_profiles the
+# command line holds no trace of $SANDBOX, so the pkill in cleanup matched
+# nothing, the test server outlived the run, and it went on answering on the
+# port with the throwaway database while the real one never came back.
+setsid nohup "$SANDBOX/student_profiles" > "$SANDBOX.log" 2>&1 < /dev/null &
 
 for _ in $(seq 1 30); do
     curl -sf -o /dev/null --max-time 2 "$BASE/" && break
