@@ -267,6 +267,20 @@ button:hover {
     background: var(--accent-dark);
 }
 
+/* Deleting an account cannot be undone, so it does not get to look like the
+   ordinary save button sitting above it. */
+button.danger {
+    background: #b3261e;
+}
+
+button.danger:hover {
+    background: #8c1d18;
+}
+
+.danger-panel {
+    border-color: #f0c8c5;
+}
+
 /* Puts two fields side by side on wide screens. */
 .two-columns {
     display: grid;
