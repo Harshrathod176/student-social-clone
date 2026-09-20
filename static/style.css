@@ -247,6 +247,30 @@ textarea {
     padding: 10px 13px;
 }
 
+/* The browser draws its own "Choose file" button inside a file input, and it
+   matches nothing else on the page. This pseudo-element is the one part of it
+   a stylesheet can reach. */
+input[type="file"] {
+    padding: 8px;
+    cursor: pointer;
+}
+
+input[type="file"]::file-selector-button {
+    font: inherit;
+    font-weight: 600;
+    margin: 0 12px 0 0;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    cursor: pointer;
+}
+
+input[type="file"]::file-selector-button:hover {
+    background: var(--border);
+}
+
 input:focus,
 textarea:focus {
     outline: none;
